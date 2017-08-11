@@ -1,33 +1,21 @@
+#include <unistd.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <sys/uio.h>
+#include <string.h>
+#include <assert.h>
+#include "endian.h"
+#include "buffer.h"
 
 #define CheapPrepend 8
 #define InitialSize 1024
 
-#include <unistd.h>
-#include <stdlib.h>
-#include <sys/uio.h>
-#include <string.h>
-#include <assert.h>
-#include <stdint.h>
-// mac找不到endian.h   ln -s /usr/include/machine/endian.h /usr/local/include/endian.h
-#include <endian.h>
-#include <errno.h>
-#include "buffer.h"
-
-
-// TODO
-// 测试用例同一套，同一个header
-// 做一个新的 buffer r_idx w_idx 换成char * 或者void *实现
-// 重新申请内存 后，更新 读写指针
-
-// !!!!!
-
-
 struct buffer
 {
-    size_t r_idx;
-    size_t w_idx;
+    char *read_idx;
+    char *write_idx;
     size_t sz;
-    void *buf;
+    char *buf;
 };
 
 struct buffer *buf_create(size_t size)
@@ -44,8 +32,8 @@ struct buffer *buf_create(size_t size)
     assert(buf->buf);
     memset(buf->buf, 0, sz);
     buf->sz = sz;
-    buf->r_idx = CheapPrepend;
-    buf->w_idx = CheapPrepend;
+    buf->read_idx = buf->buf + CheapPrepend;
+    buf->write_idx = buf->buf + CheapPrepend;
     return buf;
 }
 
@@ -57,39 +45,39 @@ void buf_release(struct buffer *buf)
 
 size_t buf_readable(struct buffer *buf)
 {
-    return buf->w_idx - buf->r_idx;
+    return buf->write_idx - buf->read_idx;
 }
 
 size_t buf_writable(struct buffer *buf)
 {
-    return buf->sz - buf->w_idx;
+    return buf->buf + buf->sz - buf->write_idx;
 }
 
 size_t buf_prependable(struct buffer *buf)
 {
-    return buf->r_idx;
+    return buf->read_idx - buf->buf;
 }
 
 const char *buf_peek(struct buffer *buf)
 {
-    return buf->buf + buf->r_idx;
+    return buf->read_idx;
 }
 
 char *buf_beginWrite(struct buffer *buf)
 {
-    return buf->buf + buf->w_idx;
+    return buf->write_idx;
 }
 
 void buf_has_written(struct buffer *buf, size_t len)
 {
     assert(len <= buf_writable(buf));
-    buf->w_idx += len;
+    buf->write_idx += len;
 }
 
 void buf_unwrite(struct buffer *buf, size_t len)
 {
     assert(len <= buf_readable(buf));
-    buf->w_idx -= len;
+    buf->write_idx -= len;
 }
 
 const char *buf_findCRLF(struct buffer *buf)
@@ -104,8 +92,8 @@ const char *buf_findEOL(struct buffer *buf)
 
 void buf_retrieveAll(struct buffer *buf)
 {
-    buf->r_idx = CheapPrepend;
-    buf->w_idx = CheapPrepend;
+    buf->read_idx = buf->buf + CheapPrepend;
+    buf->write_idx = buf->buf + CheapPrepend;
 }
 
 void buf_retrieve(struct buffer *buf, size_t len)
@@ -113,7 +101,7 @@ void buf_retrieve(struct buffer *buf, size_t len)
     assert(len <= buf_readable(buf));
     if (len < buf_readable(buf))
     {
-        buf->r_idx += len;
+        buf->read_idx += len;
     }
     else
     {
@@ -166,17 +154,17 @@ static void buf_makeSpace(struct buffer *buf, size_t len)
     size_t readable = buf_readable(buf);
     if (buf_prependable(buf) + buf_writable(buf) - CheapPrepend < len)
     {
-        size_t nsz = buf->w_idx + len;
+        size_t nsz = buf->write_idx - buf->buf + len;
         buf_swap(buf, nsz);
     }
     else
     {
-        assert(CheapPrepend < buf->r_idx);
+        assert((buf->buf + CheapPrepend) < buf->read_idx);
         memmove(buf->buf + CheapPrepend, buf_peek(buf), readable);
     }
 
-    buf->r_idx = CheapPrepend;
-    buf->w_idx = CheapPrepend + readable;
+    buf->read_idx = buf->buf + CheapPrepend;
+    buf->write_idx = buf->read_idx + readable;
     assert(readable == buf_readable(buf));
 }
 
@@ -199,59 +187,59 @@ void buf_append(struct buffer *buf, const char *data, size_t len)
 void buf_prepend(struct buffer *buf, const char *data, size_t len)
 {
     assert(len <= buf_prependable(buf));
-    buf->r_idx -= len;
-    memcpy(buf_peek(buf), data, len);
+    buf->read_idx -= len;
+    memcpy((void *)buf_peek(buf), data, len);
 }
 
 void buf_shrink(struct buffer *buf, size_t reserve)
 {
-    buf_swap(buf, buf_readable(buf) + reserve);
+    buf_swap(buf, CheapPrepend + buf_readable(buf) + reserve);
 }
 
 void buf_appendInt64(struct buffer *buf, int64_t x)
 {
     int64_t be64 = htobe64(x);
-    buf_append(buf, &be64, sizeof(int64_t));
+    buf_append(buf, (char *)&be64, sizeof(int64_t));
 }
 
 void buf_appendInt32(struct buffer *buf, int32_t x)
 {
     int32_t be32 = htobe32(x);
-    buf_append(buf, &be32, sizeof(int32_t));
+    buf_append(buf, (char *)&be32, sizeof(int32_t));
 }
 
 void buf_appendInt16(struct buffer *buf, int16_t x)
 {
     int16_t be16 = htobe16(x);
-    buf_append(buf, &be16, sizeof(int16_t));
+    buf_append(buf, (char *)&be16, sizeof(int16_t));
 }
 
 void buf_appendInt8(struct buffer *buf, int8_t x)
 {
-    buf_append(buf, &x, sizeof(int8_t));
+    buf_append(buf, (char *)&x, sizeof(int8_t));
 }
 
 void buf_prependInt64(struct buffer *buf, int64_t x)
 {
     int64_t be64 = htobe64(x);
-    buf_prepend(buf, &be64, sizeof(int64_t));
+    buf_prepend(buf, (char *)&be64, sizeof(int64_t));
 }
 
 void buf_prependInt32(struct buffer *buf, int32_t x)
 {
     int32_t be32 = htobe32(x);
-    buf_prepend(buf, &be32, sizeof(int32_t));
+    buf_prepend(buf, (char *)&be32, sizeof(int32_t));
 }
 
 void buf_prependInt16(struct buffer *buf, int16_t x)
 {
     int16_t be16 = htobe16(x);
-    buf_prepend(buf, &be16, sizeof(int16_t));
+    buf_prepend(buf, (char *)&be16, sizeof(int16_t));
 }
 
 void buf_prependInt8(struct buffer *buf, int8_t x)
 {
-    buf_prepend(buf, &x, sizeof(int8_t));
+    buf_prepend(buf, (char *)&x, sizeof(int8_t));
 }
 
 int64_t buf_peekInt64(struct buffer *buf)
@@ -330,19 +318,19 @@ ssize_t buf_readFd(struct buffer *buf, int fd, int *errno_)
     // when there is enough space in this buffer, don't read into extrabuf.
     // when extrabuf is used, we read 128k-1 bytes at most.
     int iovcnt = writable < sizeof(extrabuf) ? 2 : 1;
-    ssize_t n = readv(fd, vec, iovec);
+    ssize_t n = readv(fd, vec, iovcnt);
     if (n < 0)
     {
         *errno_ = n;
     }
     else if (n <= writable)
     {
-        buf->w_idx += n;
+        buf->write_idx += n;
     }
     else
     {
-        buf->w_idx = buf->sz;
-        buf_append(buf, n - writable);
+        buf->write_idx = buf->buf + buf->sz;
+        buf_append(buf, (char *)(&extrabuf[0]), n - writable);
     }
 
     return n;

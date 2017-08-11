@@ -1,10 +1,13 @@
 #ifndef BUFFER_H
 #define BUFFER_H
 
+#include <stdint.h>
+
 struct buffer;
 
 struct buffer *buf_create(size_t size);
 void buf_release(struct buffer *buf);
+
 size_t buf_readable(struct buffer *buf);
 size_t buf_writable(struct buffer *buf);
 size_t buf_prependable(struct buffer *buf);
