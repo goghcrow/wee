@@ -1,9 +1,7 @@
 #ifndef ENDIAN_H
 #define ENDIAN_H
-#endif /* __FINK_ENDIANDEV_PKG_ENDIAN_H__ */
 
-#if defined(__APPLE__)
-// #include <machine/endian.h> // 貌似没有~
+#ifdef __APPLE__
 #include <libkern/OSByteOrder.h>
 #define htobe16(x) OSSwapHostToBigInt16(x)
 #define htole16(x) OSSwapHostToLittleInt16(x)
@@ -19,4 +17,6 @@
 #define le64toh(x) OSSwapLittleToHostInt64(x)
 #else
 #include <endian.h>
+#endif
+
 #endif

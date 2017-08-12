@@ -1,27 +1,27 @@
 #ifndef EPOLL_H
 #define EPOLL_H
 
-#include <unistd.h>
 #include <sys/epoll.h>
+#include <unistd.h>
 #include <sys/types.h>
-#include "socket_poll.h"
+#include "poller.h"
 
-bool sp_invalid(int efd)
+bool poller_invalid(int efd)
 {
     return efd == -1;
 }
 
-int sp_create()
+int poller_create()
 {
     return epoll_create(1024);
 }
 
-void sp_release(int efd)
+void poller_release(int efd)
 {
     close(efd);
 }
 
-int sp_add(int efd, int sock, void *ud)
+int poller_add(int efd, int sock, void *ud)
 {
     struct epoll_event ev;
     ev.events = EPOLLIN;
@@ -33,12 +33,12 @@ int sp_add(int efd, int sock, void *ud)
     return 0;
 }
 
-void sp_del(int efd, int sock)
+void poller_del(int efd, int sock)
 {
     epoll_ctl(efd, EPOLL_CTL_DEL, sock, NULL);
 }
 
-void sp_write(int efd, int sock, void *ud, bool enable)
+void poller_write(int efd, int sock, void *ud, bool enable)
 {
     struct epoll_event ev;
     ev.events = EPOLLIN | (enable ? EPOLLOUT : 0);
@@ -46,7 +46,7 @@ void sp_write(int efd, int sock, void *ud, bool enable)
     epoll_ctl(efd, EPOLL_CTL_MOD, sock, &ev);
 }
 
-int sp_wait(int efd, struct event *e, int max)
+int poller_wait(int efd, struct event *e, int max)
 {
     struct epoll_event ev[max];
     int n = epoll_wait(efd, ev, max, -1);

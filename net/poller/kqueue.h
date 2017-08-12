@@ -1,25 +1,26 @@
 #ifndef KQUEUE_H
 #define KQUEUE_H
 
+#include <unistd.h>
 #include <sys/event.h>
-#include "socket_poll.h"
+#include "poller.h"
 
-bool sp_invalid(int kfd)
+bool poller_invalid(int kfd)
 {
     return kfd == -1;
 }
 
-int sp_create()
+int poller_create()
 {
     return kqueue();
 }
 
-void sp_release(int kfd)
+void poller_release(int kfd)
 {
     close(kfd);
 }
 
-void sp_del(int kfd, int sock)
+void poller_del(int kfd, int sock)
 {
     struct kevent ke;
     EV_SET(&ke, sock, EVFILT_READ, EV_DELETE, 0, 0, NULL);
@@ -28,7 +29,7 @@ void sp_del(int kfd, int sock)
     kevent(kfd, &ke, 1, NULL, 0, NULL);
 }
 
-int sp_add(int kfd, int sock, void *ud)
+int poller_add(int kfd, int sock, void *ud)
 {
     struct kevent ke;
     EV_SET(&ke, sock, EVFILT_READ, EV_ADD, 0, 0, ud);
@@ -46,13 +47,13 @@ int sp_add(int kfd, int sock, void *ud)
     EV_SET(&ke, sock, EVFILT_WRITE, EV_DISABLE, 0, 0, ud);
     if (kevent(kfd, &ke, 1, NULL, 0, NULL) == -1 || ke.flags & EV_ERROR)
     {
-        sp_del(kfd, sock);
+        poller_del(kfd, sock);
         return 1;
     }
     return 0;
 }
 
-void sp_write(int kfd, int sock, void *ud, bool enable)
+void poller_write(int kfd, int sock, void *ud, bool enable)
 {
     struct kevent ke;
     EV_SET(&ke, sock, EVFILT_WRITE, enable ? EV_ENABLE : EV_DISABLE, 0, 0, ud);
@@ -62,7 +63,7 @@ void sp_write(int kfd, int sock, void *ud, bool enable)
     }
 }
 
-int sp_wait(int kfd, struct event *e, int max)
+int poller_wait(int kfd, struct event *e, int max)
 {
     struct kevent ev[max];
     int n = kevent(kfd, NULL, 0, ev, max, NULL);
