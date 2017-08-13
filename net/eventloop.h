@@ -3,4 +3,7 @@
 
 struct eventloop;
 
+void evloop_loop();
+void evloop_quit();
+
 #endif

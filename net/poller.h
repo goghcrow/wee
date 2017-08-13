@@ -13,10 +13,10 @@ struct event
     bool error;
 };
 
-bool poller_invalid(poll_fd fd);
+// -1 poller_invalid
 poll_fd poller_create();
 void poller_release(poll_fd fd);
-int poller_add(poll_fd fd, int sock, void *ud);
+bool poller_add(poll_fd fd, int sock, void *ud);
 void poller_del(poll_fd fd, int sock);
 void poller_write(poll_fd fd, int sock, void *ud, bool enable);
 int poller_wait(poll_fd fd, struct event *e, int max);

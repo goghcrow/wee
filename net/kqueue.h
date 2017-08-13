@@ -2,17 +2,19 @@
 #define KQUEUE_H
 
 #include <unistd.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <sys/event.h>
 #include "poller.h"
 
-bool poller_invalid(int kfd)
-{
-    return kfd == -1;
-}
-
 int poller_create()
 {
-    return kqueue();
+    int kfd = kqueue();
+    if (kfd == -1)
+    {
+        perror("ERROR kqueue");
+    }
+    return kfd;
 }
 
 void poller_release(int kfd)
@@ -29,28 +31,28 @@ void poller_del(int kfd, int sock)
     kevent(kfd, &ke, 1, NULL, 0, NULL);
 }
 
-int poller_add(int kfd, int sock, void *ud)
+bool poller_add(int kfd, int sock, void *ud)
 {
     struct kevent ke;
     EV_SET(&ke, sock, EVFILT_READ, EV_ADD, 0, 0, ud);
     if (kevent(kfd, &ke, 1, NULL, 0, NULL) == -1 || ke.flags & EV_ERROR)
     {
-        return 1;
+        return false;
     }
     EV_SET(&ke, sock, EVFILT_WRITE, EV_ADD, 0, 0, ud);
     if (kevent(kfd, &ke, 1, NULL, 0, NULL) == -1 || ke.flags & EV_ERROR)
     {
         EV_SET(&ke, sock, EVFILT_READ, EV_DELETE, 0, 0, NULL);
         kevent(kfd, &ke, 1, NULL, 0, NULL);
-        return 1;
+        return false;
     }
     EV_SET(&ke, sock, EVFILT_WRITE, EV_DISABLE, 0, 0, ud);
     if (kevent(kfd, &ke, 1, NULL, 0, NULL) == -1 || ke.flags & EV_ERROR)
     {
         poller_del(kfd, sock);
-        return 1;
+        return false;
     }
-    return 0;
+    return true;
 }
 
 void poller_write(int kfd, int sock, void *ud, bool enable)

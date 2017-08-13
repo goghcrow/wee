@@ -1,10 +1,13 @@
-socket_test: net/socket_test.c
+cloure_test: base/closure_test.c
+	$(CC) -std=c99 -g -Wall -o $@ $^
+
+socket_test: net/socket_test.c net/socket.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
 buffer_test: base/buffer.c base/buffer_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-poll_test: net/poller/poller_test.c
+poll_test: net/poller_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
 threadpool_test: threadpool/threadpool.c threadpool/threadpool_test.c
@@ -21,6 +24,8 @@ mq_ts_test: mq/mq.ts.c mq/mq_test.c
 
 clean:
 	-rm -f a.out
+	-rm -f test
+	-rm -f cloure_test
 	-rm -f socket_test
 	-rm -f poll_test
 	-rm -f buffer_test

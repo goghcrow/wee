@@ -1,15 +1,24 @@
-#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-int main(void) {
-    uint64_t x1 =1;
-    uint32_t x2 =1;
-    uint16_t x3 =1;
-    uint8_t x4 =1;
+typedef struct
+{
+} * Object;
 
-    int64_t x5 =1;
-    int32_t x6 =1;
-    int16_t x7 =1;
-    int8_t x8 =1;
+Object new()
+{
+    Object obj = malloc(sizeof(*obj));
+    return obj;
+}
+
+void ReleaseObject(Object obj)
+{
+    free(obj);
+}
+
+int main(int argc, const char *argv[])
+{
+    Object obj = new();
 
     return 0;
 }

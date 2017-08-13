@@ -2,15 +2,20 @@
 #define CHAN_H
 
 #include "eventloop.h"
+#include <stdbool.h>
 
-// typedef void (*)(void) delegate;
+
 
 struct chan
 {
     int fd;
-    void *onWiret;
-    void *onReadl;
-    void *onError;
+    struct eventloop *evloop;
+    delegate on_wiret;
+    delegate on_read;
+    delegate on_close;
+    delegate on_error;
+    bool event_handling;
+    bool in_loop;
 };
 
 struct chan *chan_create(struct eventloop *evloop, int fd)

@@ -3,17 +3,18 @@
 
 #include <sys/epoll.h>
 #include <unistd.h>
+#include <stdio.h>
 #include <sys/types.h>
 #include "poller.h"
 
-bool poller_invalid(int efd)
-{
-    return efd == -1;
-}
-
 int poller_create()
 {
-    return epoll_create(1024);
+    int efd = epoll_create(1024);
+    if (efd == -1)
+    {
+        perror("ERROR epoll_create");
+    }
+    return efd;
 }
 
 void poller_release(int efd)
@@ -21,16 +22,16 @@ void poller_release(int efd)
     close(efd);
 }
 
-int poller_add(int efd, int sock, void *ud)
+bool poller_add(int efd, int sock, void *ud)
 {
     struct epoll_event ev;
     ev.events = EPOLLIN;
     ev.data.ptr = ud;
     if (epoll_ctl(efd, EPOLL_CTL_ADD, sock, &ev) == -1)
     {
-        return 1;
+        return false;
     }
-    return 0;
+    return true;
 }
 
 void poller_del(int efd, int sock)

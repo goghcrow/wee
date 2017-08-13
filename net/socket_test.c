@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include "poller/poller.h"
+#include "poller.h"
 #include <stdbool.h>
 #include <errno.h>
 #include <stdint.h>
@@ -172,7 +172,7 @@ void test_dns()
 
 void test_sync()
 {
-    int sockfd = socket_createSync("www.baidu.com", "80");
+    int sockfd = socket_clientSync("www.baidu.com", "80");
     char *payload = "GET / HTTP/1.1\r\n\r\n";
     char res[1024];
     write(sockfd, payload, strlen(payload));
@@ -183,12 +183,41 @@ void test_sync()
     close(sockfd);
 }
 
+void test_sync_serv()
+{
+    struct sockaddr_storage their_addr;
+    socklen_t addr_size = sizeof(their_addr);
+
+    int listen_fd = socket_clientSync(NULL, "9999");
+    if (socket_listen(listen_fd) == false)
+    {
+        return;
+    }
+
+    int new_fd = accept(listen_fd, (struct sockaddr *)&their_addr, &addr_size);
+    if (new_fd < 0)
+    {
+        perror("ERROR accept");
+        return;
+    }
+    close(listen_fd);
+
+    char *payload = "HELLO\r\n";
+    char res[1024];
+    write(new_fd, payload, strlen(payload));
+    // socket_shutdownWrite(new_fd);
+    read(new_fd, res, sizeof(res));
+    close(new_fd);
+    puts(res);
+}
+
 int main(void)
 {
     // test_cli();
     // test_serv();
     // test_dns();
-    test_sync();
+    // test_sync();
+    test_sync_serv();
 
     return 0;
 }
