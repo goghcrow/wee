@@ -1,9 +1,10 @@
 #include <stdio.h>
-#include "socket.h"
 #include "poller/poller.h"
 #include <stdbool.h>
 #include <errno.h>
 #include <stdint.h>
+#include "socket.h"
+#include "addr.h"
 
 static char buf[1024];
 
@@ -12,7 +13,7 @@ void test_serv()
 {
     SA acceptSA;
     int fd = socket_create();
-    SA addr = socket_createInetAddrPort(9999, true);
+    SA addr = addr_createByPort(9999, true);
     socket_bind(fd, &addr);
     socket_listen(fd);
 
@@ -87,7 +88,7 @@ void test_cli()
 {
     poll_fd pfd = poller_create();
     int fd = socket_create();
-    SA addr = socket_createInetAddrIpPort("127.0.0.1", 9999);
+    SA addr = addr_createByIpPort("127.0.0.1", 9999);
     /*int i = */ socket_connect(fd, &addr);
     // if (i < 0)
     // {
@@ -100,7 +101,7 @@ void test_cli()
     poller_write(pfd, fd, NULL, true);
 
     struct event evts[1];
-    bzero(evts, sizeof(evts));
+    memset(evts, 0, sizeof(evts));
     int n = 0;
     int i = 0;
 
@@ -156,9 +157,38 @@ clear:
     poller_release(pfd);
 }
 
+void test_dns()
+{
+    struct sockaddr sa;
+    if (addr_resolve("www.youzan.com", &sa))
+    {
+        puts(addr_satostr(&sa));
+    }
+    else
+    {
+        printf("dns resolve fail\n");
+    }
+}
+
+void test_sync()
+{
+    int sockfd = socket_createSync("www.baidu.com", "80");
+    char *payload = "GET / HTTP/1.1\r\n\r\n";
+    char res[1024];
+    write(sockfd, payload, strlen(payload));
+    read(sockfd, res, sizeof(res));
+    // send(sockfd, payload, strlen(payload), 0);
+    // recv(sockfd, res, sizeof(res), 0);
+    puts(res);
+    close(sockfd);
+}
+
 int main(void)
 {
-    test_cli();
+    // test_cli();
     // test_serv();
+    // test_dns();
+    test_sync();
+
     return 0;
 }
