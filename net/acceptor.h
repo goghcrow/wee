@@ -46,7 +46,7 @@ bool acceptor_listen(struct acceptor *acceptor)
 
 void acceptor_handleRead(struct acceptor *acceptor)
 {
-    struct sockaddr *addr;
+    struct sockaddr_storage *addr;
     socket_accept(acceptor->fd, addr);
 }
 

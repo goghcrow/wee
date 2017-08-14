@@ -1,95 +1,22 @@
 #include <stdio.h>
-#include "poller.h"
 #include <stdbool.h>
 #include <errno.h>
 #include <stdint.h>
+#include <string.h>
+#include <assert.h>
+#include "poller.h"
 #include "socket.h"
-#include "addr.h"
+#include "sa.h"
 
 static char buf[1024];
-
-// curl 127.0.0.1:9999
-void test_serv()
-{
-    SA acceptSA;
-    int fd = socket_create();
-    SA addr = addr_createByPort(9999, true);
-    socket_bind(fd, &addr);
-    socket_listen(fd);
-
-    poll_fd pfd = poller_create();
-    poller_add(pfd, fd, NULL);
-
-    struct event evts[1];
-    struct event evt;
-    int cfd = 0;
-
-    while (true)
-    {
-        int n = poller_wait(pfd, evts, sizeof(evts));
-        if (n <= 0)
-        {
-            n = 0;
-            if (errno == EINTR)
-            {
-                continue;
-            }
-        }
-
-        evt = evts[0];
-        if (evt.read)
-        {
-            if (cfd)
-            {
-                ssize_t rn = socket_read(cfd, buf, sizeof(buf));
-                if (rn)
-                {
-                    buf[rn] = '\0';
-                    puts(buf);
-                    poller_write(pfd, cfd, NULL, true);
-                }
-                else
-                {
-                    puts("closed");
-                    goto clear;
-                }
-            }
-            else
-            {
-                cfd = socket_accept(fd, &acceptSA);
-                poller_add(pfd, cfd, NULL);
-            }
-        }
-        else if (evt.write)
-        {
-            puts("write");
-            poller_write(pfd, cfd, NULL, false);
-            char resp[] = "HTTP/1.0 200 OK\r\n\r\nHELLO";
-            socket_write(cfd, resp, sizeof(resp));
-            goto clear;
-        }
-        if (evt.error)
-        {
-            perror("ERROR poller_wait error");
-            goto clear;
-        }
-    }
-
-clear:
-    poller_del(pfd, cfd);
-    socket_close(cfd);
-    poller_release(pfd);
-    socket_close(fd);
-    return;
-}
 
 // nc -kl 9999
 void test_cli()
 {
     poll_fd pfd = poller_create();
     int fd = socket_create();
-    SA addr = addr_createByIpPort("127.0.0.1", 9999);
-    /*int i = */ socket_connect(fd, &addr);
+    union sockaddr_all addr = sa_fromip("127.0.0.1", 9999);
+    /*int i = */ socket_connect(fd, &addr, sizeof(addr.s));
     // if (i < 0)
     // {
     //     perror("ERROR connect");
@@ -157,12 +84,92 @@ clear:
     poller_release(pfd);
 }
 
+// curl 127.0.0.1:9999
+void test_serv()
+{
+    union sockaddr_all acceptSA;
+    socklen_t addrlen = sizeof(acceptSA);
+
+    int fd = socket_create();
+    union sockaddr_all bindSA = sa_create(9999, true);
+    
+    socket_bind(fd, &bindSA, sizeof(bindSA.s));
+    socket_listen(fd);
+
+    poll_fd pfd = poller_create();
+    poller_add(pfd, fd, NULL);
+
+    struct event evts[1];
+    struct event evt;
+    int cfd = 0;
+
+    while (true)
+    {
+        int n = poller_wait(pfd, evts, sizeof(evts));
+        if (n <= 0)
+        {
+            n = 0;
+            if (errno == EINTR)
+            {
+                continue;
+            }
+        }
+
+        evt = evts[0];
+        if (evt.read)
+        {
+            if (cfd)
+            {
+                ssize_t rn = socket_read(cfd, buf, sizeof(buf));
+                if (rn)
+                {
+                    buf[rn] = '\0';
+                    puts(buf);
+                    poller_write(pfd, cfd, NULL, true);
+                }
+                else
+                {
+                    puts("closed");
+                    goto clear;
+                }
+            }
+            else
+            {
+                cfd = socket_accept(fd, &acceptSA, &addrlen);
+                poller_add(pfd, cfd, NULL);
+            }
+        }
+        else if (evt.write)
+        {
+            puts("write");
+            poller_write(pfd, cfd, NULL, false);
+            char resp[] = "HTTP/1.0 200 OK\r\n\r\nHELLO";
+            socket_write(cfd, resp, sizeof(resp));
+            goto clear;
+        }
+        if (evt.error)
+        {
+            perror("ERROR poller_wait error");
+            goto clear;
+        }
+    }
+
+clear:
+    poller_del(pfd, cfd);
+    socket_close(cfd);
+    poller_release(pfd);
+    socket_close(fd);
+    return;
+}
+
 void test_dns()
 {
-    struct sockaddr sa;
-    if (addr_resolve("www.youzan.com", &sa))
-    {
-        puts(addr_satostr(&sa));
+    union sockaddr_all u;
+    
+    char buf[INET6_ADDRSTRLEN];
+    if (sa_resolve("www.youzan.com", &u)) {
+        sa_toip(&u, buf, sizeof(buf));
+        puts(buf);
     }
     else
     {
@@ -217,7 +224,7 @@ int main(void)
     // test_serv();
     // test_dns();
     // test_sync();
-    test_sync_serv();
+    // test_sync_serv();
 
     return 0;
 }

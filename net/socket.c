@@ -1,21 +1,27 @@
 #ifndef SOCKET_H
 #define SOCKET_H
 
-#include <sys/socket.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/uio.h>
 #include <netdb.h>
 #include <stdio.h>
+#include <sys/socket.h>
 #include <netinet/tcp.h>
+#include <arpa/inet.h>
 #include <strings.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <errno.h>
+#include "socket.h"
+#include "sa.h"
 
-static int socket_ctor(char *host, char *port, bool async);
+static int socket_ctor(char *host, char *port, bool nonblock);
+static int socket_create_(bool nonblock);
+static int socket_accept_(int sockfd, union sockaddr_all *addr, socklen_t *addrlen, bool nonblock);
+static void socket_setNonblock(int sockfd);
 
 int socket_client(char *host, char *port)
 {
@@ -32,55 +38,24 @@ int socket_server(char *port)
     return socket_ctor(NULL, port, true);
 }
 
-void socket_setNonblock(int sockfd)
+int socket_serverSync(char *port)
 {
-    int flag = fcntl(sockfd, F_GETFL, 0);
-    if (flag < 0)
-    {
-        fprintf(stderr, "ERROR fail to fcntl F_GETFL\n");
-        return;
-    }
-    if (fcntl(sockfd, F_SETFL, flag | O_NONBLOCK | O_CLOEXEC) == -1)
-    {
-        fprintf(stderr, "ERROR fail to fcntl F_SETFL\n");
-    }
+    return socket_ctor(NULL, port, false);
 }
 
 int socket_create()
 {
-#ifdef __APPLE__
-    int sockfd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sockfd < 0)
-    {
-        perror("ERROR socket");
-        return -1;
-    }
-    socket_setNonblock(sockfd);
-#else
-    int sockfd = socket(PF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_TCP);
-    if (sockfd < 0)
-    {
-        perror("ERROR socket");
-        return -1;
-    }
-#endif
-
-    int yes = 1;
-    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-#ifdef SO_REUSEPORT
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
-#endif
-    setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
-
-    // !! for server
-    signal(SIGPIPE, SIG_IGN);
-    return sockfd;
+    return socket_create_(true);
 }
 
-bool socket_bind(int sockfd, const struct sockaddr *addr)
+int socket_createSync()
 {
-    if (bind(sockfd, addr, sizeof(*addr)) < 0)
+    return socket_create_(false);
+}
+
+bool socket_bind(int sockfd, const union sockaddr_all *addr, socklen_t addrlen)
+{
+    if (bind(sockfd, (struct sockaddr *)addr, addrlen) < 0)
     {
         close(sockfd);
         perror("ERROR bind");
@@ -100,14 +75,127 @@ bool socket_listen(int sockfd)
     return true;
 }
 
-int socket_accept(int sockfd, struct sockaddr *addr)
+int socket_accept(int sockfd, union sockaddr_all *addr, socklen_t *addrlen)
 {
-    int addr_len = sizeof(*addr);
+    return socket_accept_(sockfd, addr, addrlen, true);
+}
+
+int socket_acceptSync(int sockfd, union sockaddr_all *addr, socklen_t *addrlen)
+{
+    return socket_accept_(sockfd, addr, addrlen, false);
+}
+
+bool socket_connect(int sockfd, const union sockaddr_all *addr, socklen_t addrlen)
+{
+    if (connect(sockfd, (struct sockaddr *)addr, addrlen) < 0)
+    {
+        perror("ERROR connect");
+        return false;
+    }
+    return true;
+}
+
+ssize_t socket_read(int sockfd, void *buf, size_t count)
+{
+    return read(sockfd, buf, count);
+}
+
+ssize_t socket_readv(int sockfd, const struct iovec *iov, int iovcnt)
+{
+    return readv(sockfd, iov, iovcnt);
+}
+
+ssize_t socket_write(int sockfd, const void *buf, size_t count)
+{
+    return write(sockfd, buf, count);
+}
+
+void socket_close(int sockfd)
+{
+    if (close(sockfd) < 0)
+    {
+        perror("ERROR close");
+    }
+}
+
+// shutdown后最终还必须要close
+void socket_shutdownWrite(int sockfd)
+{
+    if (shutdown(sockfd, SHUT_WR) < 0)
+    {
+        perror("ERROR shutdown");
+    }
+}
+
+int socket_getError(int sockfd)
+{
+    int optval;
+    int len = sizeof(optval);
+    if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &optval, (socklen_t *)&len) < 0)
+    {
+        return errno;
+    }
+    else
+    {
+        return optval;
+    }
+}
+
+static void socket_setNonblock(int sockfd)
+{
+    int flag = fcntl(sockfd, F_GETFL, 0);
+    if (flag < 0)
+    {
+        fprintf(stderr, "ERROR fail to fcntl F_GETFL\n");
+        return;
+    }
+    if (fcntl(sockfd, F_SETFL, flag | O_NONBLOCK | O_CLOEXEC) == -1)
+    {
+        fprintf(stderr, "ERROR fail to fcntl F_SETFL\n");
+    }
+}
+
+static int socket_create_(bool nonblock)
+{
 #ifdef __APPLE__
-    int connfd = accept(sockfd, addr, (socklen_t *)&addr_len);
-    socket_setNonblock(connfd);
+    int sockfd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 #else
-    int connfd = accept4(sockfd, addr, (socklen_t *)addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    int sockfd = socket(PF_INET, SOCK_STREAM | (nonblock ? SOCK_NONBLOCK : 0) | SOCK_CLOEXEC, IPPROTO_TCP);
+#endif
+
+    if (sockfd < 0)
+    {
+        perror("ERROR socket");
+        return -1;
+    }
+
+#ifdef __APPLE__
+    if (nonblock)
+    {
+        socket_setNonblock(sockfd);
+    }
+#endif
+
+    int yes = 1;
+    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+#ifdef SO_REUSEPORT
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
+#endif
+    setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
+
+    // !! for server
+    signal(SIGPIPE, SIG_IGN);
+    return sockfd;
+}
+
+// 使用 struct sockaddr_storage 来接受, 转成 struct sockaddr 所以需要addr_len
+static int socket_accept_(int sockfd, union sockaddr_all *addr, socklen_t *addrlen, bool nonblock)
+{
+#ifdef __APPLE__
+    int connfd = accept(sockfd, (struct sockaddr *)addr, addrlen);
+#else
+    int connfd = accept4(sockfd, (struct sockaddr *)addr, addrlen, (nonblock ? SOCK_NONBLOCK : 0) | SOCK_CLOEXEC);
 #endif
     if (connfd < 0)
     {
@@ -138,76 +226,21 @@ int socket_accept(int sockfd, struct sockaddr *addr)
         }
     }
 
+#ifdef __APPLE__
+    if (nonblock)
+    {
+        socket_setNonblock(sockfd);
+    }
+#endif
+
     return connfd;
 }
 
-bool socket_connect(int sockfd, const struct sockaddr *addr)
-{
-    if (connect(sockfd, addr, sizeof(*addr)) < 0)
-    {
-        perror("ERROR connect");
-        return false;
-    }
-    return true;
-}
-
-ssize_t socket_read(int sockfd, void *buf, size_t count)
-{
-    return read(sockfd, buf, count);
-}
-
-ssize_t socket_readv(int sockfd, const struct iovec *iov, int iovcnt)
-{
-    return readv(sockfd, iov, iovcnt);
-}
-
-ssize_t socket_write(int sockfd, const void *buf, size_t count)
-{
-    return write(sockfd, buf, count);
-}
-
-bool socket_close(int sockfd)
-{
-    if (close(sockfd) < 0)
-    {
-        perror("ERROR close");
-        return true;
-    }
-    return false;
-}
-
-// shutdown后最终还必须要close
-bool socket_shutdownWrite(int sockfd)
-{
-    if (shutdown(sockfd, SHUT_WR) < 0)
-    {
-        perror("ERROR shutdown");
-        return false;
-    }
-    return true;
-}
-
-int socket_getError(int sockfd)
-{
-    int optval;
-    int len = sizeof(optval);
-    if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &optval, (socklen_t *)&len) < 0)
-    {
-        return errno;
-    }
-    else
-    {
-        return optval;
-    }
-}
-
-// FIXME gethostname
-// FIXME getpeername
-
-// port listen port for server, connect port for client
+// 创建socket_client 或者 socket_server
+// server 不能传递host, 自行查找绑定
 // server :: socket_createSync(NULL, 9999)
 // client :: socket_createSync("www.google.com", 90)
-static int socket_ctor(char *host, char *port, bool async)
+static int socket_ctor(char *host, char *port, bool nonblock)
 {
     bool isServer = host == NULL;
 
@@ -234,7 +267,7 @@ static int socket_ctor(char *host, char *port, bool async)
         sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
 #else
         // linux 内核高版本可以直接设置 SOCK_NONBLOCK | SOCK_CLOEXEC,生一次fcntl系统调用
-        sockfd = socket(p->ai_family, p->ai_socktype | (async ? SOCK_NONBLOCK | SOCK_CLOEXEC : 0), p->ai_protocol);
+        sockfd = socket(p->ai_family, p->ai_socktype | (nonblock ? SOCK_NONBLOCK : 0) | SOCK_CLOEXEC, p->ai_protocol);
 #endif
 
         if (sockfd < 0)
@@ -244,7 +277,7 @@ static int socket_ctor(char *host, char *port, bool async)
         }
 
 #ifdef __APPLE__
-        if (async)
+        if (nonblock)
         {
             socket_setNonblock(sockfd);
         }

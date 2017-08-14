@@ -2,6 +2,9 @@
 #define BUFFER_H
 
 #include <stdint.h>
+#include <stddef.h> /*size_t*/
+#include <sys/types.h> /*ssize_t*/
+
 
 struct buffer;
 

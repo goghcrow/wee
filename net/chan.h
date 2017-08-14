@@ -5,7 +5,6 @@
 #include <stdbool.h>
 
 
-
 struct chan
 {
     int fd;
