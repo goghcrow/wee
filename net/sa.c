@@ -122,7 +122,8 @@ bool sa_resolve(char *hostname, union sockaddr_all *u)
         false;
     }
 
-    u->v4.sin_addr = (((struct sockaddr_in *)res->ai_addr)->sin_addr);
+    u->v4.sin_family = res->ai_family;
+    u->v4.sin_addr = ((struct sockaddr_in *)res->ai_addr)->sin_addr;
     u->v4.sin_len = res->ai_addrlen;
     freeaddrinfo(res);
     return true;

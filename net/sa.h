@@ -4,6 +4,8 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 
+#define SA_BUF_SIZE INET6_ADDRSTRLEN
+
 union sockaddr_all {
     struct sockaddr s;
     struct sockaddr_in v4;
