@@ -127,6 +127,33 @@ void socket_shutdownWrite(int sockfd)
     }
 }
 
+bool socket_sendAllSync(int sockfd, char *buf, size_t *size)
+{
+    int sent = 0;
+    int left = *size;
+    int n;
+
+    while (sent < *size)
+    {
+        n = send(sockfd, buf + sent, left);
+        if (n < 0)
+        {
+            break;
+        }
+        sent += n;
+        left -= n;
+    }
+
+    *size = sent;
+    return n < 0 false : true;
+}
+
+// FIXME
+bool socket_recvAllSync(int sockfd, char *buf, size_t size)
+{
+    return false;
+}
+
 int socket_getError(int sockfd)
 {
     int optval;
@@ -288,34 +315,34 @@ static int socket_ctor(char *host, char *port, bool nonblock)
         {
             if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) < 0)
             {
-                perror("ERROR setsockopt SO_REUSEADDR");
-                close(sockfd);
-                return -1;
+                // perror("ERROR setsockopt SO_REUSEADDR");
+                // close(sockfd);
+                // return -1;
             }
 
 #ifdef SO_REUSEPORT
             if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes)) < 0)
             {
-                perror("ERROR setsockopt SO_REUSEPORT");
-                close(sockfd);
-                return -1;
+                // perror("ERROR setsockopt SO_REUSEPORT");
+                // close(sockfd);
+                // return -1;
             }
 #endif
 
             if (setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(int)) < 0)
             {
 
-                perror("ERROR setsockopt SO_KEEPALIVE");
-                close(sockfd);
-                return -1;
+                // perror("ERROR setsockopt SO_KEEPALIVE");
+                // close(sockfd);
+                // return -1;
             }
         }
 
         if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) < 0)
         {
-            perror("ERROR setsockopt TCP_NODELAY");
-            close(sockfd);
-            return -1;
+            // perror("ERROR setsockopt TCP_NODELAY");
+            // close(sockfd);
+            // return -1;
         }
 
         // SO_REUSEADDR needs to be set before bind().

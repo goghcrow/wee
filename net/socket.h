@@ -31,5 +31,6 @@ int socket_clientSync(char *host, char *port);
 int socket_serverSync(char *port);
 int socket_createSync();
 int socket_acceptSync(int sockfd, union sockaddr_all *addr, socklen_t *addrlen);
-
+bool socket_sendAllSync(int sockfd, char *buf, size_t *size);
+bool socket_recvAllSync(int sockfd, char *buf, size_t size);
 #endif
