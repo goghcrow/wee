@@ -1,18 +1,18 @@
 #ifndef CHAN_H
 #define CHAN_H
 
-#include "eventloop.h"
 #include <stdbool.h>
-
+#include "eventloop.h"
+#include "closure.h"
 
 struct chan
 {
     int fd;
     struct eventloop *evloop;
-    delegate on_wiret;
-    delegate on_read;
-    delegate on_close;
-    delegate on_error;
+    closure(on_write, void, void());
+    closure(on_read, void, void());
+    closure(on_close, void, void());
+    closure(on_error, void, void());
     bool event_handling;
     bool in_loop;
 };

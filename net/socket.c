@@ -131,11 +131,11 @@ bool socket_sendAllSync(int sockfd, char *buf, size_t *size)
 {
     int sent = 0;
     int left = *size;
-    int n;
+    ssize_t n;
 
     while (sent < *size)
     {
-        n = send(sockfd, buf + sent, left);
+        n = send(sockfd, buf + sent, left, 0);
         if (n < 0)
         {
             break;
@@ -145,7 +145,7 @@ bool socket_sendAllSync(int sockfd, char *buf, size_t *size)
     }
 
     *size = sent;
-    return n < 0 false : true;
+    return n < 0 ? false : true;
 }
 
 // FIXME
@@ -273,9 +273,9 @@ static int socket_ctor(char *host, char *port, bool nonblock)
 
     struct addrinfo hints, *servinfo, *p;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_UNSPEC;        /* Allow IPv4 or IPv6 */
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
+    hints.ai_flags = AI_PASSIVE;        /* For wildcard IP address */
 
     // !!! sync for client
     int status = getaddrinfo(host, port, &hints, &servinfo);
@@ -297,7 +297,7 @@ static int socket_ctor(char *host, char *port, bool nonblock)
         sockfd = socket(p->ai_family, p->ai_socktype | (nonblock ? SOCK_NONBLOCK : 0) | SOCK_CLOEXEC, p->ai_protocol);
 #endif
 
-        if (sockfd < 0)
+        if (sockfd == -1)
         {
             perror("ERROR socket");
             continue;

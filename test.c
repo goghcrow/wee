@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <dirent.h>
 
 typedef struct
 {
@@ -20,17 +21,19 @@ void ReleaseObject(Object obj)
 
 int main(int argc, const char *argv[])
 {
-    Object obj = new ();
+    readdir(NULL);
 
-    printf("sizeof sockaddr is %lu\n", sizeof(struct sockaddr));
-    printf("sizeof sockaddr_in is %lu\n", sizeof(struct sockaddr_in));
-    printf("sizeof sockaddr_in6 is %lu\n", sizeof(struct sockaddr_in6));
-    printf("sizeof sockaddr_all is %lu\n", sizeof(union sockaddr_all {
-        struct sockaddr s;
-        struct sockaddr_in v4;
-        struct sockaddr_in6 v6;
-    }));
-    printf("sizeof sockaddr_storage is %lu\n", sizeof(struct sockaddr_storage));
+    // Object obj = new ();
+
+    // printf("sizeof sockaddr is %lu\n", sizeof(struct sockaddr));
+    // printf("sizeof sockaddr_in is %lu\n", sizeof(struct sockaddr_in));
+    // printf("sizeof sockaddr_in6 is %lu\n", sizeof(struct sockaddr_in6));
+    // printf("sizeof sockaddr_all is %lu\n", sizeof(union sockaddr_all {
+    //     struct sockaddr s;
+    //     struct sockaddr_in v4;
+    //     struct sockaddr_in6 v6;
+    // }));
+    // printf("sizeof sockaddr_storage is %lu\n", sizeof(struct sockaddr_storage));
     
     return 0;
 }

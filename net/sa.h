@@ -23,6 +23,6 @@ uint16_t sa_toport(union sockaddr_all *u);
 uint32_t sa_iplong(union sockaddr_all *u);
 sa_family_t sa_family(union sockaddr_all *u);
 
-bool sa_resolve(char *hostname,  union sockaddr_all *u);
+bool sa_resolve(char *hostname, union sockaddr_all *u);
 
 #endif

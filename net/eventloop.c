@@ -8,9 +8,14 @@ struct eventloop
 {
     int poll_fd;
     int wakeup_fd; // FIX eventFd
+    const pid_t tid;
+    void* ctx;
     bool looping;
     bool quit;
     bool event_handling;
+    bool defer_calling;
+
+    
 };
 
 struct eventloop *evloop_create()
