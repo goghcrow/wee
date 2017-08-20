@@ -25,6 +25,10 @@ void pkt_handle(void *ud,
         print_bytes((char *)payload, payload_size);
     }
 
+    if (tcp_hdr->th_flags & TH_FIN) {
+        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    }
+
     char ip_buf[INET_ADDRSTRLEN];
 
     printf("+-------------------------+\n");

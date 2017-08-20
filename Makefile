@@ -1,7 +1,10 @@
+# all: clean cloure_test server_test sa_test socket_test buffer_test poll_test threadpool_test q_test mq_test mq_ts_test
+
+table_test: base/table_test.c base/table.c
+	$(CC) -std=c99 -g -Wall -o $@ $^
+
 tcpsniff: sniff/tcpsniff_test.c sniff/tcpsniff.c
 	$(CC) -std=c99 -g -Wall -lpcap -o $@ $^
-
-all: clean cloure_test server_test sa_test socket_test buffer_test poll_test threadpool_test q_test mq_test mq_ts_test
 
 cloure_test: base/closure_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
@@ -35,6 +38,7 @@ mq_ts_test: mq/mq.ts.c mq/mq_test.c
 
 clean:
 	-rm -f a.out
+	-rm -f table_test
 	-rm -f tcpsniff
 	-rm -f test
 	-rm -f cloure_test
