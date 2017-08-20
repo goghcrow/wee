@@ -1,10 +1,4 @@
-tcp: sniffer/tcp.c
-	$(CC) -std=c99 -g -Wall -lpcap -o $@ $^
-
-arp: sniffer/arp.c
-	$(CC) -std=c99 -g -Wall -lpcap -o $@ $^
-
-sniff: sniffer/simple.c
+tcpsniff: sniff/tcpsniff_test.c sniff/tcpsniff.c
 	$(CC) -std=c99 -g -Wall -lpcap -o $@ $^
 
 all: clean cloure_test server_test sa_test socket_test buffer_test poll_test threadpool_test q_test mq_test mq_ts_test
@@ -40,10 +34,8 @@ mq_ts_test: mq/mq.ts.c mq/mq_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
 clean:
-	-rm -f tcp
-	-rm -f sniff
-	-rm -f arp
 	-rm -f a.out
+	-rm -f tcpsniff
 	-rm -f test
 	-rm -f cloure_test
 	-rm -f sa_test

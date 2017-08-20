@@ -11,9 +11,21 @@
 #include <assert.h>
 #include <unistd.h>
 
-#define MAXBYTES2CAPTURE 65535
+// 发现c99编译不过
+// gcc  -g -Wall -lpcap -o xxx xxx.c
 
-#define TCPSYN_LEN 20
+// ACK or PSH-ACK
+// static char g_filter_exp[] = "(tcp[13] == 0x10) or (tcp[13] == 0x18)";
+
+
+
+static int g_snaplen = 65535;       /* 最大捕获长度               */
+static int g_pkt_cnt_limit = 0;     /* 限制捕获pkt数量0:unlimited */
+static int g_timeout_limit = 1000;  /* 多少ms从内核copy一次数据    */
+static char g_filter_exp[] = "tcp"; /* bpf expression           */
+static int g_dlt;                   /* data link type           */
+static int g_dl_hdr_offset;         /* dlhdr大小 决定iphdr偏移    */
+static char errbuf[PCAP_ERRBUF_SIZE];
 
 // Pseudoheader (Used to compute TCP checksum. Check RFC 793)
 typedef struct pseudoheader
@@ -40,27 +52,101 @@ void print_bytes(const char *payload, size_t size)
     printf("\n");
 }
 
-void pktHandler(u_char *arg, const struct pcap_pkthdr *pkt_hdr, const u_char *pkt)
+static void lookupnet(const char *device, bpf_u_int32 *netp, bpf_u_int32 *maskp)
+{
+    // Get information for device 查询网卡IP地址与子网掩码
+    // device = any ip与mask 均为0.0.0.0
+    if (pcap_lookupnet(device, netp, maskp, errbuf) == -1)
+    {
+        fprintf(stderr, "ERROR in pcap_lookupnet, cound not get info for device: %s\n", errbuf);
+        *netp = 0;
+        *maskp = 0;
+    }
+
+    if (*netp)
+    {
+        char ip_buf[INET6_ADDRSTRLEN];
+        char mask_buf[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET, netp, ip_buf, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, maskp, mask_buf, INET_ADDRSTRLEN);
+        printf("%s ip=%s mask=%s\n", device, ip_buf, mask_buf);
+    }
+}
+
+static void detect_datalink(pcap_t *handle)
+{
+    // data link type 参见 #include <pcap/bpf.h>
+    g_dlt = pcap_datalink(handle);
+    switch (g_dlt)
+    {
+    case DLT_RAW: // 无链路层hdr
+        g_dl_hdr_offset = 0;
+        break;
+    case DLT_EN10MB: // 1 : ether网 >= 10M
+        g_dl_hdr_offset = 14;
+        break;
+    case DLT_LINUX_SLL: // 12 : device = any 时链路层 hdr
+        g_dl_hdr_offset = 16;
+        break;
+    default:
+        fprintf(stderr, "链路层类型未知(%d)\n", g_dlt);
+        exit(1);
+    }
+}
+
+static void setfilter(pcap_t *handle, int optimize, bpf_u_int32 netmask)
+{
+    struct bpf_program filter;
+    // Compiles the filter expression into a BPF filter program
+    if (pcap_compile(handle, &filter, g_filter_exp, optimize, netmask) == -1)
+    {
+        fprintf(stderr, "ERROR in pcap_compile: %s\n", pcap_geterr(handle));
+        exit(1);
+    }
+
+    // Load the fitler program into the pakcet capture device
+    if (pcap_setfilter(handle, &filter) == -1)
+    {
+        fprintf(stderr, "ERROR in pcap_setfilter: %s\n", pcap_geterr(handle));
+        exit(1);
+    }
+}
+
+static pcap_t *openlive(char *device)
+{
+    pcap_t *handle = pcap_open_live(device, g_snaplen, g_pkt_cnt_limit, g_timeout_limit, errbuf);
+    if (handle == NULL)
+    {
+        fprintf(stderr, "ERROR in pcap_open_live, cound not open %s: %s\n", device, errbuf);
+        exit(1);
+    }
+    return handle;
+}
+
+void pkt_handler(u_char *arg, const struct pcap_pkthdr *pkt_hdr, const u_char *pkt)
 {
     struct ether_header *etherhdr = (struct ether_header *)pkt;
     u_int16_t ether_type = ntohs(etherhdr->ether_type);
+    printf("===%d\n", ether_type);
     if (ether_type != ETHERTYPE_IP)
     {
+        // FIXME linux 好像有问题
         return; // 忽略非 ip pkt
     }
 
     if (pkt_hdr->caplen != pkt_hdr->len)
     {
-        fprintf(stderr, "包长 %d bytes, 实际捕获: %d bytes\n", pkt_hdr->len, pkt_hdr->caplen);
+        fprintf(stderr, "Packet length is %d bytes, but only %d bytes captured\n", pkt_hdr->len, pkt_hdr->caplen);
         exit(1);
     }
 
     // FIXME print pkt_hdr->ts
+    // FIXME 忽略ipv6
 
-    // ether hdr 固定长度14byte
-    int ether_hdr_len = 14;
-
+    /*
     {
+        // ether hdr 固定长度14byte
+        int ether_hdr_len = 14;
         const u_char *ip_hdr = pkt + ether_hdr_len;
         // 网络字节序ip_hl在第一个字节的低位4bit, 见README.md
         // ip_hl 代表 多少个 32bit segment, * 4才为bytes数
@@ -80,26 +166,21 @@ void pktHandler(u_char *arg, const struct pcap_pkthdr *pkt_hdr, const u_char *pk
         int payload_len = pkt_hdr->caplen - total_hdr_len;
         assert(payload_len >= 0);
         const u_char *payload = tcp_hdr + tcp_hdr_len;
-
         // printf("ip_hdr_len=%d tcp_hdr_len=%d payload_len=%d\n", ip_hdr_len, tcp_hdr_len, payload_len);
-
-        /*
-        struct ip *ip_s = (struct ip *)ip_hdr;
-        struct tcphdr *tcphdr_s = (struct tcphdr *)tcp_hdr;
-        */
-
-        // if (payload_len > 0)
-        // {
-        //
-        // }
     }
-
-    // FIXME 忽略ipv6
+    */
 
     {
+        // ether hdr 固定长度14byte
+        int ether_hdr_len = 14;
         // 或者 强制类型转换, 不需要自己算, 直接读, 疑问: 这里为什么不用自己ntoh转字节序????????
         struct ip *ip_hdr = (struct ip *)(pkt + ether_hdr_len);
         int ip_hdr_sz = ip_hdr->ip_hl * 4;
+        if (ip_hdr->ip_p != IPPROTO_TCP)
+        {
+            // FIXME linux 好像有问题
+            return; // 忽略非tcp pkt
+        }
         struct tcphdr *tcp_hdr = (struct tcphdr *)(pkt + ether_hdr_len + ip_hdr_sz);
         int tcp_hdr_sz = tcp_hdr->th_off * 4;
         int total_hdr_sz = ether_hdr_len + ip_hdr_sz + tcp_hdr_sz;
@@ -110,144 +191,77 @@ void pktHandler(u_char *arg, const struct pcap_pkthdr *pkt_hdr, const u_char *pk
         printf("ip_hdr_size=%d tcp_hdr_size=%d payload_size=%d\n", ip_hdr_sz, tcp_hdr_sz, payload_sz);
         if (payload_sz > 0)
         {
-            print_bytes((char *)payload, payload_sz);
+            // print_bytes((char *)payload, payload_sz);
         }
+
+        // FIXME 特么这里也有问题
+        // mac 正常 linux 打印的ip是反的, 字节序不对
+        // !!! ... 这里不应该转字节序....
+        printf("   ACK: %u\n", ntohl(tcp_hdr->th_ack));
+        printf("   SEQ: %u\n", ntohl(tcp_hdr->th_seq));
+
+        printf("   DST IP: %s\n", inet_ntoa(ip_hdr->ip_dst));
+        printf("   SRC IP: %s\n", inet_ntoa(ip_hdr->ip_src));
+
+        printf("   SRC PORT: %d\n", ntohs(tcp_hdr->th_sport));
+        printf("   DST PORT: %d\n", ntohs(tcp_hdr->th_dport));
+
+        TCP_RST_send(tcp_hdr->th_ack, ip_hdr->ip_dst.s_addr, ip_hdr->ip_src.s_addr, tcp_hdr->th_dport, tcp_hdr->th_sport);
+        TCP_RST_send(htonl(ntohl(tcp_hdr->th_seq) + 1), ip_hdr->ip_src.s_addr, ip_hdr->ip_dst.s_addr, tcp_hdr->th_sport, tcp_hdr->th_dport);
     }
 }
 
-/* main(): Main function. Opens network interface for capture. Tells the kernel*/
-/* to deliver packets with the ACK or PSH-ACK flags set. Prints information    */
-/* about captured packets. Calls TCP_RST_send() to kill the TCP connection     */
-/* using TCP RST packets.                                                      */
-int main(int argc, char **argv)
+void sniff(const char *device)
 {
-    char *device;
-    if (argc < 2)
-    {
-        device = "any";
-    }
-    else
-    {
-        device = argv[1];
-    }
+    assert(device != NULL);
 
-    char errbuf[PCAP_ERRBUF_SIZE];
-    bpf_u_int32 ip_raw = 0;          /* IP address as integer */
-    bpf_u_int32 subnet_mask_raw = 0; /* Subnet mask as integer */
-    // 查询网卡IP地址与子网掩码
-    // device = any ip与mask 均为0.0.0.0
-    if (pcap_lookupnet(device, &ip_raw, &subnet_mask_raw, errbuf) == -1)
-    {
-        fprintf(stderr, "ERROR pcap_lookupnet, %s\n", errbuf);
-        exit(1);
-    }
+    bpf_u_int32 ip = 0;
+    bpf_u_int32 subnet_mask = 0;
 
-    char ip_buf[INET6_ADDRSTRLEN];
-    char mask_buf[INET6_ADDRSTRLEN];
-    inet_ntop(AF_INET, &ip_raw, ip_buf, INET_ADDRSTRLEN);
-    inet_ntop(AF_INET, &subnet_mask_raw, mask_buf, INET_ADDRSTRLEN);
-    printf("%s ip=%s mask=%s\n", device, ip_buf, mask_buf);
+    lookupnet(device, &ip, &subnet_mask);
+    pcap_t *handle = openlive(device);
+    detect_datalink(handle);
+    setfilter(handle, 1, subnet_mask); // (handle, 0, ip);
 
-    int pkt_cnt_limit = 0;    /* unlimited count */
-    int timeout_limit = 1000; /* In milliseconds */
-    // 这里不限制pkt数量, 没秒从内核缓冲区读入一次数据
-    pcap_t *descr = pcap_open_live(device, MAXBYTES2CAPTURE, pkt_cnt_limit, timeout_limit, errbuf);
-    if (descr == NULL)
     {
-        fprintf(stderr, "ERROR pcap_open_live, %s\n", errbuf);
-        exit(1);
+        // if (pcap_loop(handle, pkt_cnt_limit, pkt_handler, NULL) == -1)
+        // {
+        //     fprintf(stderr, "ERROR pcap_loop, %s", errbuf);
+        //     pcap_close(handle);
+        //     exit(1);
+        // }
+        // pcap_close(handle);
+        // exit(0);
     }
 
-    // int pcap_loop(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
-    /* The contract we have to satisfy with our callback function */
-    // typedef void (*pcap_handler)(u_char *, const struct pcap_pkthdr *, const u_char *);
-    if (pcap_loop(descr, pkt_cnt_limit, pktHandler, NULL) == -1)
-    {
-        fprintf(stderr, "ERROR pcap_loop, %s", errbuf);
-        exit(1);
-    }
-    exit(0);
-
-    struct bpf_program filter;
-    // Compiles the filter expression into a BPF filter program
-    if (pcap_compile(descr, &filter, "(tcp[13] == 0x10) or (tcp[13] == 0x18)", 1, subnet_mask_raw) == -1)
-    {
-        fprintf(stderr, "ERROR pcap_compile, %s\n", pcap_geterr(descr));
-        exit(1);
-    }
-
-    // Load the fitler program into the pakcet capture device
-    if (pcap_setfilter(descr, &filter) == -1)
-    {
-        fprintf(stderr, "ERROR pcap_setfilter, %s\n", pcap_geterr(descr));
-        exit(1);
-    }
-
-    struct pcap_pkthdr *pkthdr;
-    struct ip *iphdr = NULL;
-    struct tcphdr *tcphdr = NULL;
-    const u_char *packet = NULL;
+    struct pcap_pkthdr *pkt_hdr = NULL;
+    const u_char *pkt = NULL;
     int count = 0;
-    int r = 0;
-
-    // pkthdr = malloc(sizeof(*pkthdr));
-    // char buf[INET6_ADDRSTRLEN];
-    // memset(buf, 0, sizeof(buf));
-
+    int ret = 0;
     while (1)
     {
-        // packet = pcap_next(descr, pkthdr);
-        // if (packet == NULL)
-        // {
-        //     continue;
-        //     // fprintf(stderr, "ERROR pcap_next, %s\n", pcap_geterr(descr));
-        //     // exit(1);
-        // }
-
-        r = pcap_next_ex(descr, &pkthdr, &packet);
-        if (r == 0)
+        ret = pcap_next_ex(handle, &pkt_hdr, &pkt);
+        if (ret == 0)
         {
-            continue;
+            continue; // timeout
         }
-        if (r == -1)
+        if (ret == -1)
         {
-            fprintf(stderr, "ERROR pcap_next, %s\n", pcap_geterr(descr));
+            fprintf(stderr, "ERROR in pcap_next: %s\n", pcap_geterr(handle));
             exit(1);
         }
 
-        assert(pkthdr->len == pkthdr->caplen);
-
-        iphdr = (struct ip *)(packet + 14);
-        tcphdr = (struct tcphdr *)(packet + 14 + 20);
-
         if (count == 0)
-        {
             printf("+-------------------------+\n");
-        }
-
         printf("Received Packet No.%d:\n", ++count);
-        printf("   ACK: %u\n", ntohl(tcphdr->th_ack));
-        printf("   SEQ: %u\n", ntohl(tcphdr->th_seq));
-
-        printf("   DST IP: %s\n", inet_ntoa(iphdr->ip_dst));
-        printf("   SRC IP: %s\n", inet_ntoa(iphdr->ip_src));
-
-        // inet_ntop(AF_INET, &(iphdr->ip_dst), buf, INET_ADDRSTRLEN);
-        // printf("   DST IP: %s\n", buf);
-        // inet_ntop(AF_INET, &(iphdr->ip_src), buf, INET_ADDRSTRLEN);
-        // printf("   SRC IP: %s\n", buf);
-        printf("   SRC PORT: %d\n", ntohs(tcphdr->th_sport));
-        printf("   DST PORT: %d\n", ntohs(tcphdr->th_dport));
-
-        TCP_RST_send(tcphdr->th_ack, iphdr->ip_dst.s_addr, iphdr->ip_src.s_addr, tcphdr->th_dport, tcphdr->th_sport);
-        TCP_RST_send(htonl(ntohl(tcphdr->th_seq) + 1), iphdr->ip_src.s_addr, iphdr->ip_dst.s_addr, tcphdr->th_sport, tcphdr->th_dport);
-
+        pkt_handler(NULL, pkt_hdr, pkt);
         printf("+-------------------------+\n");
     }
 
-    return 0;
+    pcap_close(handle);
 }
 
+#define TCPSYN_LEN 20
 /* TCP_RST_send(): Crafts a TCP packet with the RST flag set using the supplied */
 /* values and sends the packet through a raw socket.   */
 int TCP_RST_send(u_int32_t seq, u_int32_t src_ip, u_int32_t dst_ip, u_int16_t src_port, u_int16_t dst_port)
@@ -378,4 +392,21 @@ unsigned short in_cksum(unsigned short *addr, int len)
     sum += (sum >> 16);                 /* add carry */
     answer = ~sum;                      /* truncate to 16 bits */
     return (answer);
+}
+
+int main(int argc, char **argv)
+{
+    char *device;
+    if (argc < 2)
+    {
+        device = "any";
+    }
+    else
+    {
+        device = argv[1];
+    }
+
+    sniff(device);
+
+    return 0;
 }
