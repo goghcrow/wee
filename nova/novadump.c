@@ -161,7 +161,6 @@ void pkt_handle(void *ud,
         memcpy(t1, nova_hdr->service_name, nova_hdr->service_len);
         t1[nova_hdr->service_len] = 0;
         printf("service=%s\n", t1);
-        free(t1);
 
         char t2[nova_hdr->method_len + 1];
         memcpy(t2, nova_hdr->method_name, nova_hdr->method_len);
