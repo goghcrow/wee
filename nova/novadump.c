@@ -146,7 +146,7 @@ void pkt_handle(void *ud,
         buf_append(c->buf, (const char *)payload, payload_size);
         if (buf_readable(c->buf) > 4)
         {
-            if (buf_peekInt32(c->buf) >= buf_readable(c->buf))
+            if (buf_peekInt32(c->buf) <= buf_readable(c->buf))
             {
                 swNova_Header *nova_hdr = createNovaHeader();
                 swNova_unpack((char *)buf_peek(c->buf), buf_readable(c->buf), nova_hdr);
