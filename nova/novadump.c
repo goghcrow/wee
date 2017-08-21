@@ -144,31 +144,33 @@ void pkt_handle(void *ud,
             }
         }
         buf_append(c->buf, (const char *)payload, payload_size);
-        if (buf_readable(c->buf) > 4)
+        if (buf_readable(c->buf) < 4)
         {
-            if (buf_peekInt32(c->buf) <= buf_readable(c->buf))
-            {
-                swNova_Header *nova_hdr = createNovaHeader();
-                swNova_unpack((char *)buf_peek(c->buf), buf_readable(c->buf), nova_hdr);
-
-                char *t1 = malloc(nova_hdr->service_len + 1);
-                assert(t1);
-                memcpy(t1, nova_hdr->service_name, nova_hdr->service_len);
-                t1[nova_hdr->service_len] = 0;
-                printf("service=%s\n", t1);
-
-                char *t2 = malloc(nova_hdr->method_len + 1);
-                assert(t2);
-                memcpy(t2, nova_hdr->method_name, nova_hdr->method_len);
-                t1[nova_hdr->method_len] = 0;
-                printf("method=%s\n", t2);
-
-
-                // TODO
-                buf_retrieve(c->buf, buf_peekInt32(c->buf));
-                deleteNovaHeader(nova_hdr);
-            }
+            return;
         }
+
+        if (buf_peekInt32(c->buf) > buf_readable(c->buf))
+        {
+            return;
+        }
+
+        swNova_Header *nova_hdr = createNovaHeader();
+        swNova_unpack((char *)buf_peek(c->buf), buf_readable(c->buf), nova_hdr);
+
+        char t1[nova_hdr->service_len + 1];
+        memcpy(t1, nova_hdr->service_name, nova_hdr->service_len);
+        t1[nova_hdr->service_len] = 0;
+        printf("service=%s\n", t1);
+        free(t1);
+
+        char t2[nova_hdr->method_len + 1];
+        memcpy(t2, nova_hdr->method_name, nova_hdr->method_len);
+        t2[nova_hdr->method_len] = 0;
+        printf("method=%s\n", t2);
+
+        // TODO
+        buf_retrieve(c->buf, buf_peekInt32(c->buf));
+        deleteNovaHeader(nova_hdr);
     }
 }
 
