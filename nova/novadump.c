@@ -134,13 +134,13 @@ void pkt_handle(void *ud,
         {
             if (swNova_IsNovaPack((const char *)payload, payload_size))
             {
-                // 非nova数据
-                return;
+                c = conn_create(ip_hdr->ip_src.s_addr, tcp_hdr->th_sport);
+                pq_set(c);
             }
             else
             {
-                c = conn_create(ip_hdr->ip_src.s_addr, tcp_hdr->th_sport);
-                pq_set(c);
+                // 非nova数据
+                return;
             }
         }
         buf_append(c->buf, (const char *)payload, payload_size);
