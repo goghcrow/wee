@@ -25,6 +25,7 @@ void pkt_handle(void *ud,
         print_bytes((char *)payload, payload_size);
     }
 
+    // AND RST
     if (tcp_hdr->th_flags & TH_FIN) {
         printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
     }
