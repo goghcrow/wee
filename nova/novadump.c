@@ -126,7 +126,7 @@ void pkt_handle(void *ud,
             conn_release(c);
         }
     }
-    else if ((tcp_hdr->th_flags & TH_PUSH) && payload_size)
+    else if (/*(tcp_hdr->th_flags & TH_PUSH) &&*/ payload_size)
     {
         // print_bytes((char *)payload, payload_size);
         struct conn *c = pq_get(ip_hdr->ip_src.s_addr, tcp_hdr->th_sport, 0);
