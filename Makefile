@@ -33,10 +33,10 @@ threadpool_test: threadpool/threadpool.c threadpool/threadpool_test.c
 q_test: threadpool/queue_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-mq_test: mq/mq.c mq/mq_test.c
+mq_test: base/mq.c base/mq_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-mq_ts_test: mq/mq.ts.c mq/mq_test.c
+mq_ts_test: base/mq.ts.c base/mq_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
 clean:

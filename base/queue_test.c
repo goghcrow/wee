@@ -76,23 +76,6 @@ int main(int argc, char **argv)
     printf("%d\n", QUEUE_COUNT(&q));
     
 
-    // {
-    //     int a[3][2];
-    //     printf("%p\n", &a[0]);
-    //     printf("%p\n", &a[0][1]);
-    //     printf("%p\n", &a[1]);
-    //     printf("%p\n", &a[1][1]);
-    //     printf("%p\n", &a[2]);
-    //     printf("%p\n", &a[2][1]);
-    // }
-    // {
-    //     int a[2];
-    //     printf("%p\n", a);
-    //     printf("%p\n", &a);
-    //     printf("%p\n", a + 1);
-    //     printf("%p\n", &a + 1);
-    // }
-
     /// 块设备 字符设备
     // while(1) {
     //     fprintf(stdout, "1");
