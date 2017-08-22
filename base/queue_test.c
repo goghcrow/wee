@@ -5,6 +5,18 @@
 #include <assert.h>
 #include "queue.h"
 
+int queue_count(QUEUE *q)
+{
+    int count = 0;
+    QUEUE *i;
+    QUEUE_FOREACH(i, q)
+    {
+        count++;
+    }
+    return count;
+}
+
+
 struct Person
 {
     int age;
@@ -63,7 +75,7 @@ int main(int argc, char **argv)
     //     puts(ip->name);
     // }
 
-    printf("%d\n", QUEUE_COUNT(&q));
+    printf("%d\n", queue_count(&q));
 
     while(!QUEUE_EMPTY(&q)) {
         iq = QUEUE_HEAD(&q);
@@ -73,7 +85,7 @@ int main(int argc, char **argv)
         deletePerson(ip);
     }
 
-    printf("%d\n", QUEUE_COUNT(&q));
+    printf("%d\n", queue_count(&q));
     
 
     /// 块设备 字符设备

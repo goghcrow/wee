@@ -1,288 +1,391 @@
-/*================================================================
-*   Copyright (C) 2015 All rights reserved.
-*   
-*   文件名称：Nova.c
-*   创 建 者：Zhang Yuanhao
-*   邮    箱：bluefoxah@gmail.com
-*   创建日期：2015年09月09日
-*   描    述：
-*
-#include "nova.h"
-================================================================*/
-
-#include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <stdbool.h>
 #include <stddef.h>
-#include "nova.h"
+#include <string.h>
+#include <sys/socket.h>
+#include <errno.h>
+#include <ctype.h>
+#include <stdarg.h>
+#include "../base/cJSON.h"
+#include "generic.h"
+#include "novacodec.h"
+#include "../net/socket.h"
+#include "../base/buffer.h"
 
-swNova_Header* createNovaHeader()
+struct globalArgs_t
 {
-    swNova_Header* tmp =  sw_malloc(sizeof(swNova_Header));
-    if (tmp == NULL) {
-        return NULL;
-    }
-    memset(tmp, 0, sizeof(swNova_Header));
-    return tmp;
+    const char *host;
+    const char *port;
+    const char *service;
+    const char *method;
+    const char *args;   /* JSON */
+    const char *attach; /* JSON */
+    struct timeval timeout;
+} globalArgs;
+
+static const char *optString = "h:p:m:a:e:t:?s!";
+
+#define INVALID_OPT(reason, ...)                                     \
+    fprintf(stderr, "\x1B[1;31m" reason "\x1B[0m\n", ##__VA_ARGS__); \
+    usage();
+
+static void usage()
+{
+    static const char *usage =
+        "\nUsage:\n"
+        "   nova -h<HOST> -p<PORT> -m<METHOD> -a<JSON_ARGUMENTS> [-e<JSON_ATTACHMENT='{}'> -t<TIMEOUT_SEC=5>]\n"
+        "   nova -h<HOST> -p<PORT> -s [-t<TIMEOUT_SEC=5>] doc: https://github.com/youzan/zan/issues/18 \n\n"
+        "Example:\n"
+        "   nova -h127.0.0.1 -p8050 -s\n"
+        "   nova -h127.0.0.1 -p8050 -m=com.youzan.material.general.service.TokenService.getToken -a='{\"xxxId\":1,\"scope\":\"\"}'\n"
+        "   nova -h127.0.0.1 -p8050 -m=com.youzan.material.general.service.TokenService.getToken -a='{\"xxxId\":1,\"scope\":\"\"}' -e='{\"xxxId\":1}'\n"
+        "   nova -h127.0.0.1 -p8050 -m=com.youzan.material.general.service.MediaService.getMediaList -a='{\"query\":{\"categoryId\":2,\"xxxId\":1,\"pageNo\":1,\"pageSize\":5}}'\n"
+        "   nova -hqabb-dev-scrm-test0 -p8100 -mcom.youzan.scrm.customer.service.customerService.getByYzUid -a '{\"xxxId\":1, \"yzUid\": 1}'\n";
+    puts(usage);
+    exit(1);
 }
 
-void deleteNovaHeader(swNova_Header* header)
+// remove prefix = sapce and remove suffix space
+static char *trim_opt(char *opt)
 {
-    if (header != NULL) {
-        if(header->service_name != NULL)
+    char *end;
+    if (opt == 0)
+    {
+        return 0;
+    }
+
+    while (isspace((int)*opt) || *opt == '=')
+        opt++;
+
+    if (*opt == 0)
+    {
+        return opt;
+    }
+
+    end = opt + strlen(opt) - 1;
+    while (end > opt && isspace((int)*end))
+        end--;
+
+    *(end + 1) = 0;
+
+    return opt;
+}
+
+static int nova_invoke()
+{
+    int ret = 1;
+    char *resp_json = NULL;
+    struct nova_hdr *nova_hdr = create_nova_generic(globalArgs.attach);
+    struct buffer *nova_buf = buf_create(1024);
+
+    struct buffer *generic_buf = thrift_generic_pack(0,
+                                                     globalArgs.service, strlen(globalArgs.service),
+                                                     globalArgs.method, strlen(globalArgs.method),
+                                                     globalArgs.args, strlen(globalArgs.args));
+    nova_pack(nova_buf, nova_hdr, buf_peek(generic_buf), buf_readable(generic_buf));
+    buf_release(generic_buf);
+
+    int sockfd = socket_clientSync(globalArgs.host, globalArgs.port);
+    if (sockfd == -1)
+    {
+        goto fail;
+    }
+
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &globalArgs.timeout, sizeof(struct timeval));
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &globalArgs.timeout, sizeof(struct timeval));
+
+    size_t send_n = socket_sendAllSync(sockfd, buf_peek(nova_buf), buf_readable(nova_buf));
+    if (send_n != buf_readable(nova_buf))
+    {
+        goto fail;
+    }
+    
+    socket_shutdownWrite(sockfd);
+    
+    // reset buffer
+    buf_retrieveAll(nova_buf);
+    
+    int errno_ = 0;
+    for (;;)
+    {
+        ssize_t recv_n = buf_readFd(nova_buf, sockfd, &errno_);
+        if (recv_n < 0)
         {
-            sw_free(header->service_name);
+            if (errno_ == EINTR)
+            {
+                continue;
+            }
+            else
+            {
+                perror("ERROR readv");
+                goto fail;
+            }
         }
-        if(header->method_name != NULL)
+        else if (recv_n < 4)
         {
-            sw_free(header->method_name);
+            goto fail;
         }
-        if (header->attach != NULL) {
-            sw_free(header->attach);
+        break;
+    }
+    
+    int32_t msg_size = buf_peekInt32(nova_buf);
+    if (msg_size <= 0)
+    {
+        fprintf(stderr, "ERROR: Invalid nova packet size %zd\n", msg_size);
+        goto fail;
+    }
+    else if (msg_size > 1024 * 1024 * 2)
+    {
+        fprintf(stderr, "ERROR: too large nova packet size %zd\n", msg_size);
+        goto fail;
+    }
+
+    while (buf_readable(nova_buf) < msg_size)
+    {
+        ssize_t recv_n = buf_readFd(nova_buf, sockfd, &errno_);
+        if (recv_n < 0)
+        {
+            if (errno_ == EINTR)
+            {
+                continue;
+            }
+            else
+            {
+                perror("ERROR receiving");
+                goto fail;
+            }
         }
-        sw_free(header);
     }
+
+    if (!nova_detect(nova_buf))
+    {
+        fprintf(stderr, "ERROR, invalid nova packet\n");
+        goto fail;
+    }
+
+    // reset nova_hdr
+    nova_hdr_release(nova_hdr);
+    nova_hdr = nova_hdr_create();
+
+    if (!nova_unpack(nova_buf, nova_hdr))
+    {
+        fprintf(stderr, "ERROR, fail to unpcak nova packet header\n");
+        goto fail;
+    }
+
+    if (!thrift_generic_unpack(nova_buf, &resp_json))
+    {
+        fprintf(stderr, "ERROR, fail to unpack thrift packet\n");
+        goto fail;
+    }
+
+    // print json attach
+    {
+        nova_hdr->attach[nova_hdr->attach_len] = 0;
+        if (strcmp(nova_hdr->attach, "{}") != 0)
+        {
+            cJSON *root = cJSON_Parse(nova_hdr->attach);
+            if (root)
+            {
+                printf("Nova Attachment: %s\n", cJSON_PrintUnformatted(root));
+                cJSON_Delete(root);
+            }
+        }
+    }
+
+    // print json resp
+    {
+        cJSON *resp;
+        cJSON *root = cJSON_Parse(resp_json);
+        if (root == NULL || !cJSON_IsObject(root))
+        {
+            fprintf(stderr, "\x1B[1;31m"
+                            "Invalid JSON Response"
+                            "\x1B[0m\n");
+            printf("%s", resp_json);
+            goto fail;
+        }
+        else if ((resp = cJSON_GetObjectItem(root, "error_response")))
+        {
+            printf("\x1B[1;31m%s\x1B[0m\n", cJSON_Print(resp));
+        }
+        else if ((resp = cJSON_GetObjectItem(root, "response")))
+        {
+            printf("\x1B[1;32m%s\x1B[0m\n", cJSON_Print(resp));
+        }
+        else
+        {
+            printf("%s\n", cJSON_Print(root));
+        }
+
+        cJSON_Delete(root);
+    }
+    ret = 0;
+
+fail:
+    nova_hdr_release(nova_hdr);
+    buf_release(nova_buf);
+    if (resp_json != NULL)
+    {
+        free(resp_json);
+    }
+    if (sockfd != -1)
+    {
+        close(sockfd);
+    }
+    return ret;
 }
 
-int swNova_IsNovaPack(const char* data, int nLen)
+int main(int argc, char **argv)
 {
-    if (nLen < NOVA_HEADER_COMMON_LEN || !data) {
-        return SW_ERR;
-    }
-    //magic offset
-    int off = 4;
-    uint16_t magic = 0;
-    if(swReadU16((const uchar *)(data + off), &magic) != SW_OK)
-    {
-        return SW_ERR;
-    }
-    if(magic != NOVA_MAGIC)
-    {
-        return SW_ERR;
-    }
-    
-    return SW_OK;
-}
+    int opt = 0;
 
-int swNova_unpack(char* data, int length, swNova_Header* header)
-{
-    if (length <= NOVA_HEADER_COMMON_LEN) {
-        swWarn("length is less than nova header common length. length=%d", length);
-        return SW_ERR;
-    }
-    int off = 0;
-    //read msg length
-    if(swReadI32((const uchar *)data + off, &(header->msg_size)) != SW_OK)
+    char *ret = NULL;
+    size_t method_len = 0;
+    size_t service_len = 0;
+
+    globalArgs.attach = "{}";
+    globalArgs.timeout.tv_sec = 5;
+    globalArgs.timeout.tv_usec = 0;
+
+    opt = getopt(argc, argv, optString);
+    optarg = trim_opt(optarg);
+    while (opt != -1)
     {
-        swWarn("read msg length error.");
-        return SW_ERR;
-    }
-    off += 4;
-    
-    //判断msg_size是否异常
-    if(header->msg_size <= NOVA_HEADER_COMMON_LEN) {
-        swWarn("msg size is less than nova header common length. msg_size=%d", header->msg_size);
-        return SW_ERR;
-    }
-    
-    //read magic
-    
-    if(swReadU16((const uchar *)data + off, &(header->magic)) != SW_OK)
-    {
-        swWarn("read magic error");
-        return SW_ERR;
-    }
-    
-    off += 2;
-    //判断magic是否合法
-    if(header->magic != NOVA_MAGIC)
-    {
-        swWarn("magic error. magic=%x", header->magic);
-        return SW_ERR;
-    }
-    
-    //read header size
-    if(swReadI16((const uchar *)data + off, &(header->head_size)) != SW_OK)
-    {
-        swWarn("read header size error");
-        return SW_ERR;
-    }
-    off += 2;
-    
-    //判断header size是否合法
-    if (header->head_size > header->msg_size) {
-        swWarn("header size is inval invalid. msg_size=%d, header_size=%d", header->msg_size, header->msg_size);
-        return SW_ERR;
-    }
-    
-    //read version
-    if(swReadByte((const uchar *)data + off, (char *)&(header->version)) != SW_OK)
-    {
-        swWarn("read version error");
-        return SW_ERR;
-    }
-    off += 1;
-    //read ip
-    if(swReadU32((const uchar *)data + off, &(header->ip)) != SW_OK)
-    {
-        swWarn("read ip error");
-        return SW_ERR;
-    }
-    off += 4;
-    //read port
-    if(swReadU32((const uchar *)data + off, &(header->port)) != SW_OK)
-    {
-        swWarn("read port error");
-        return SW_ERR;
+        switch (opt)
+        {
+        case 's':
+            if (globalArgs.host == NULL)
+            {
+                globalArgs.host = "127.0.0.1";
+            }
+            globalArgs.service = "com.youzan.service.test";
+            globalArgs.method = "stats";
+            globalArgs.args = "{}";
+            break;
+
+        case 'h':
+            globalArgs.host = optarg;
+            break;
+
+        case 'p':
+            globalArgs.port = optarg;
+            break;
+
+        case 'm':
+            ret = strrchr(optarg, '.');
+            if (ret == NULL)
+            {
+                INVALID_OPT("Invalid method %s", optarg);
+            }
+
+            service_len = ret - optarg;
+            method_len = strlen(optarg) - service_len - 1;
+            *ret = 0;
+            globalArgs.service = malloc(service_len + 1);
+            globalArgs.method = malloc(method_len + 1);
+            memcpy((void *)globalArgs.service, optarg, service_len + 1);
+            memcpy((void *)globalArgs.method, ret + 1, method_len + 1);
+            break;
+
+        case 'a':
+            globalArgs.args = optarg;
+            break;
+
+        case 'e':
+            globalArgs.attach = optarg;
+            break;
+
+        case 't':
+            globalArgs.timeout.tv_sec = atoi(optarg) > 0 ? atoi(optarg) : 5;
+            break;
+
+        case '?':
+            usage();
+            break;
+
+        default:
+            break;
+        }
+        opt = getopt(argc, argv, optString);
+        optarg = trim_opt(optarg);
     }
 
-    off += 4;
-    //read service name
-    if(swReadString((const uchar *)data + off, length - off, &(header->service_name), &(header->service_len)) != SW_OK)
+    if (globalArgs.host == NULL)
     {
-        swWarn("read service name error");
-        return SW_ERR;
-    }
-    off += 4;
-    off += header->service_len;
-    CHECK_PACK
-    
-    //read method name
-    if(swReadString((const uchar *)data + off, length - off, &(header->method_name), &(header->method_len)) != SW_OK)
-    {
-        swWarn("read method name error");
-        return SW_ERR;
-    }
-    off += 4;
-    off += header->method_len;
-    CHECK_PACK
-    
-    //read seq no
-    if(swReadI64((const uchar *)data + off, &(header->seq_no)) != SW_OK)
-    {
-        swWarn("read seq no error");
-        return SW_ERR;
-    }
-    off += 8;
-    CHECK_PACK
-    
-    //read attach
-    if(swReadString((const uchar *)data + off, length - off, &(header->attach), &(header->attach_len)) != SW_OK)
-    {
-        swWarn("read attachment error");
-        return SW_ERR;
-    }
-    off += 4;
-    off += header->attach_len;
-    CHECK_PACK
-    
-    return SW_OK;
-}
-
-int swNova_pack(swNova_Header* header, char* body, int body_len, char **data, int32_t* length)
-{
-    int header_size = header->head_size;
-    int msg_size = header_size + body_len;
-    if(*data != NULL)
-    {
-        sw_free(*data);
-    }
-    char *pTmp = sw_malloc(msg_size);
-    if (!pTmp) {
-        return SW_ERR;
+        INVALID_OPT("Missing Host");
     }
 
-    int off = 0;
-    //write msg_size
-    if(swWriteI32((uchar *)pTmp+off, msg_size) != SW_OK)
+    if (atoi(globalArgs.port) <= 0)
     {
-        swWarn("write msg size error");
-        return SW_ERR;
+        INVALID_OPT("Missing Port");
     }
 
-    off += 4;
-    //write magic
-    if(swWriteI16((uchar *)pTmp+off, header->magic) != SW_OK)
+    if (globalArgs.service == NULL)
     {
-        swWarn("write magic error");
-        return SW_ERR;
+        INVALID_OPT("Missing Service -m=${service}.${method}");
     }
 
-    off += 2;
-    //write header size
-    if(swWriteI16((uchar *)pTmp+off, header->head_size) != SW_OK)
+    if (globalArgs.method == NULL)
     {
-        swWarn("write header size error");
-        return SW_ERR;
+        INVALID_OPT("Missing Method -m=${service}.${method}");
     }
 
-    off += 2;
-    //write version
-    if(swWriteByte((uchar *)pTmp+off, header->version) != SW_OK)
+    if (globalArgs.args == NULL)
     {
-        swWarn("write version error");
-        return SW_ERR;
+        INVALID_OPT("Missing Arguments -a'${jsonargs}'");
+    }
+    else
+    {
+        cJSON *root = cJSON_Parse(globalArgs.args);
+        if (root == NULL)
+        {
+            INVALID_OPT("Invalid Arguments JSON Format : %s", globalArgs.args);
+        }
+        else if (!cJSON_IsObject(root))
+        {
+            INVALID_OPT("Invalid Arguments JSON Format : %s", globalArgs.args);
+        }
+        else
+        {
+            // 泛化调用参数为扁平KV结构, 非标量参数要二次打包
+            cJSON *cur = root->child;
+            while (cur)
+            {
+                if (cJSON_IsArray(cur) || cJSON_IsObject(cur))
+                {
+                    cJSON_ReplaceItemInObject(root, cur->string, cJSON_CreateString(cJSON_PrintUnformatted(cur)));
+                }
+
+                cur = cur->next;
+            }
+
+            globalArgs.args = cJSON_PrintUnformatted(root);
+        }
     }
 
-    off += 1;
-    //write ip
-    if(swWriteU32((uchar *)pTmp+off, header->ip) != SW_OK)
+    if (globalArgs.attach != NULL)
     {
-        swWarn("write ip error");
-        return SW_ERR;
+        cJSON *root = cJSON_Parse(globalArgs.attach);
+        if (root == NULL)
+        {
+            INVALID_OPT("Invalid Attach JSON Format as %s", globalArgs.attach);
+        }
+        else if (!cJSON_IsObject(root))
+        {
+            INVALID_OPT("Invalid Attach JSON Format as %s", globalArgs.attach);
+        }
     }
 
-    off += 4;
-    //write port
-    if(swWriteU32((uchar *)pTmp+off, header->port) != SW_OK)
-    {
-        swWarn("write port error");
-        return SW_ERR;
-    }
+    fprintf(stderr, "invoking nova://%s:%s/%s.%s?args=%s&attach=%s\n",
+            globalArgs.host,
+            globalArgs.port,
+            globalArgs.service,
+            globalArgs.method,
+            globalArgs.args,
+            globalArgs.attach);
 
-    off += 4;
-    //write service name
-    if(swWriteString((uchar *)pTmp+off, header->service_name, header->service_len) != SW_OK)
-    {
-        swWarn("write service name error");
-        return SW_ERR;
-    }
-
-    off += 4;
-    off += header->service_len;
-    //write method name
-    if(swWriteString((uchar *)pTmp+off, header->method_name, header->method_len) != SW_OK)
-    {
-        swWarn("write method name error");
-        return SW_ERR;
-    }
-
-    off += 4;
-    off += header->method_len;
-    //write seq no
-    if(swWriteI64((uchar *)pTmp+off, header->seq_no) != SW_OK)
-    {
-        swWarn("write seq no error");
-        return SW_ERR;
-    }
-
-    off += 8;
-    //write attachement
-    if(swWriteString((uchar *)pTmp+off, header->attach, header->attach_len) != SW_OK)
-    {
-        swWarn("write attachement error");
-        return SW_ERR;
-    }
-
-    off += 4;
-    off += header->attach_len;
-    //write body
-    if(swWriteBytes((uchar *)pTmp+off, (char*)body, body_len) != SW_OK)
-    {
-        swWarn("write body error");
-        return SW_ERR;
-    }
-
-    *length = msg_size;
-    *data = pTmp;
-    return SW_OK;
+    return nova_invoke();
 }

@@ -2,6 +2,7 @@
 #include "buffer.h"
 #include <assert.h>
 #include <string.h>
+#include <stdlib.h>
 
 void test0()
 {
@@ -133,7 +134,7 @@ void test9()
 void test10()
 {
     struct buffer *buf = buf_create(10);
-    #include <fcntl.h>
+#include <fcntl.h>
     int fd = open("/dev/zero", O_RDONLY);
     if (fd == -1)
     {
@@ -153,6 +154,20 @@ void test10()
     buf_release(buf);
 }
 
+void test11()
+{
+    char *hello = "HELLO WORLD\n";
+    struct buffer *buf = buf_create(10);
+    buf_append(buf, hello, strlen(hello));
+
+    char *str = malloc(strlen(hello) + 1);
+    buf_retrieveAsString(buf, strlen(hello), str);
+    puts(str);
+    free(str);
+
+    buf_release(buf);
+}
+
 int main(void)
 {
     test1();
@@ -165,5 +180,6 @@ int main(void)
     test8();
     test9();
     test10();
+    test11();
     return 0;
 }

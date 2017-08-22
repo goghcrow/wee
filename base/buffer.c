@@ -91,6 +91,14 @@ const char *buf_findEOL(struct buffer *buf)
     return (char *)memchr(buf_peek(buf), '\n', buf_readable(buf));
 }
 
+void buf_retrieveAsString(struct buffer *buf, size_t len, char *str)
+{
+    assert(str != NULL);
+    memcpy(str, buf_peek(buf), len);
+    str[len] = 0;
+    buf_retrieve(buf, len);
+}
+
 void buf_retrieveAll(struct buffer *buf)
 {
     buf->read_idx = CheapPrepend;

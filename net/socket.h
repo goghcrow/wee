@@ -8,8 +8,8 @@
 #include "sa.h"
 
 // 快速创建server与client
-int socket_client(char *host, char *port);
-int socket_server(char *port);
+int socket_client(const char *host, const char *port);
+int socket_server(const char *port);
 
 // 辅助函数
 int socket_create();
@@ -27,10 +27,10 @@ int socket_getError(int sockfd);
 // FIXME getpeername
 
 // 阻塞版本
-int socket_clientSync(char *host, char *port);
-int socket_serverSync(char *port);
+int socket_clientSync(const char *host, const char *port);
+int socket_serverSync(const char *port);
 int socket_createSync();
 int socket_acceptSync(int sockfd, union sockaddr_all *addr, socklen_t *addrlen);
-bool socket_sendAllSync(int sockfd, char *buf, size_t *size);
-bool socket_recvAllSync(int sockfd, char *buf, size_t size);
+size_t socket_sendAllSync(int sockfd, const char *buf, size_t size);
+size_t socket_recvAllSync(int sockfd, char *buf, size_t size);
 #endif

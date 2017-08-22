@@ -20,6 +20,7 @@ void buf_has_written(struct buffer *buf, size_t len);
 void buf_unwrite(struct buffer *buf, size_t len);
 const char *buf_findCRLF(struct buffer *buf);
 const char *buf_findEOL(struct buffer *buf);
+void buf_retrieveAsString(struct buffer *buf, size_t len, char *str);
 void buf_retrieveAll(struct buffer *buf);
 void buf_retrieve(struct buffer *buf, size_t len);
 void buf_retrieveUntil(struct buffer *buf, const char *end);

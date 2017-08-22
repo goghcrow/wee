@@ -18,27 +18,27 @@
 #include "socket.h"
 #include "sa.h"
 
-static int socket_ctor(char *host, char *port, bool nonblock);
+static int socket_ctor(const char *host, const char *port, bool nonblock);
 static int socket_create_(bool nonblock);
 static int socket_accept_(int sockfd, union sockaddr_all *addr, socklen_t *addrlen, bool nonblock);
 static void socket_setNonblock(int sockfd);
 
-int socket_client(char *host, char *port)
+int socket_client(const char *host, const char *port)
 {
     return socket_ctor(host, port, true);
 }
 
-int socket_clientSync(char *host, char *port)
+int socket_clientSync(const char *host, const char *port)
 {
     return socket_ctor(host, port, false);
 }
 
-int socket_server(char *port)
+int socket_server(const char *port)
 {
     return socket_ctor(NULL, port, true);
 }
 
-int socket_serverSync(char *port)
+int socket_serverSync(const char *port)
 {
     return socket_ctor(NULL, port, false);
 }
@@ -127,31 +127,56 @@ void socket_shutdownWrite(int sockfd)
     }
 }
 
-bool socket_sendAllSync(int sockfd, char *buf, size_t *size)
+size_t socket_sendAllSync(int sockfd, const char *buf, size_t size)
 {
-    int sent = 0;
-    int left = *size;
-    ssize_t n;
-
-    while (sent < *size)
+    size_t sent = 0;
+    while (sent < size)
     {
-        n = send(sockfd, buf + sent, left, 0);
-        if (n < 0)
+        ssize_t n = send(sockfd, buf + sent, size - sent, 0);
+        if (n == -1)
         {
-            break;
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            else
+            {
+                perror("ERROR send");
+                break;
+            }
         }
         sent += n;
-        left -= n;
     }
 
-    *size = sent;
-    return n < 0 ? false : true;
+    return sent;
 }
 
-// FIXME
-bool socket_recvAllSync(int sockfd, char *buf, size_t size)
+size_t socket_recvAllSync(int sockfd, char *buf, size_t size)
 {
-    return false;
+    size_t recved = 0;
+    while (recved < size)
+    {
+        ssize_t n = recv(sockfd, buf + recved, size - recved, 0);
+        if (n == -1)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+        }
+        else if (n == 0)
+        {
+            break; // EOF
+        }
+        else
+        {
+            perror("ERROR recv");
+            break;
+        }
+        recved += n;
+    }
+
+    return recved;
 }
 
 int socket_getError(int sockfd)
@@ -267,15 +292,15 @@ static int socket_accept_(int sockfd, union sockaddr_all *addr, socklen_t *addrl
 // server 不能传递host, 自行查找绑定
 // server :: socket_createSync(NULL, 9999)
 // client :: socket_createSync("www.google.com", 90)
-static int socket_ctor(char *host, char *port, bool nonblock)
+static int socket_ctor(const char *host, const char *port, bool nonblock)
 {
     bool isServer = host == NULL;
 
     struct addrinfo hints, *servinfo, *p;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;        /* Allow IPv4 or IPv6 */
+    hints.ai_family = AF_UNSPEC; /* Allow IPv4 or IPv6 */
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;        /* For wildcard IP address */
+    hints.ai_flags = AI_PASSIVE; /* For wildcard IP address */
 
     // !!! sync for client
     int status = getaddrinfo(host, port, &hints, &servinfo);

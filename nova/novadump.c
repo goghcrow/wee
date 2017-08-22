@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include "../sniff/tcpsniff.h"
+#include "../net/sniff.h"
 #include "../base/buffer.h"
 #include "../base/queue.h"
 #include "nova.h"

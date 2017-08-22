@@ -1,7 +1,7 @@
-all: clean novadump table_test sniff cloure_test server_test sa_test socket_test buffer_test poll_test threadpool_test q_test mq_test mq_ts_test
+# all: clean novadump table_test sniff_test cloure_test server_test sa_test socket_test buffer_test poll_test threadpool_test queue_test mq_test mq_ts_test
 
-novadump: nova/novadump.c sniff/tcpsniff.c base/buffer.c nova/Nova.c nova/BinaryData.c
-	$(CC) -std=c99 -g -Wall -lpcap -o $@ $^
+# novadump: nova/novadump.c net/sniff.c base/buffer.c nova/Nova.c nova/BinaryData.c
+	# $(CC) -std=c99 -g -Wall -lpcap -o $@ $^
 
 table_test: base/table_test.c base/table.c
 	$(CC) -std=c99 -g -Wall -o $@ $^

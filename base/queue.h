@@ -106,15 +106,4 @@ typedef void *QUEUE[2];
         QUEUE_NEXT_PREV(q) = QUEUE_PREV(q); \
     } while (0)
 
-int inline QUEUE_COUNT(QUEUE *q)
-{
-    int count = 0;
-    QUEUE *i;
-    QUEUE_FOREACH(i, q)
-    {
-        count++;
-    }
-    return count;
-}
-
 #endif /* QUEUE_H_ */
