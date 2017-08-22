@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <arpa/inet.h>
-#include "tcpsniff.h"
+#include "sniff.h"
 
 void print_bytes(const char *payload, size_t size)
 {
@@ -25,9 +25,8 @@ void pkt_handle(void *ud,
         print_bytes((char *)payload, payload_size);
     }
 
-    // AND RST
-    if (tcp_hdr->th_flags & TH_FIN) {
-        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    if ((tcp_hdr->th_flags & TH_FIN) || (tcp_hdr->th_flags & TH_RST)) {
+        // close
     }
 
     char ip_buf[INET_ADDRSTRLEN];

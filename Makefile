@@ -1,4 +1,4 @@
-# all: clean cloure_test server_test sa_test socket_test buffer_test poll_test threadpool_test q_test mq_test mq_ts_test
+all: clean novadump table_test sniff cloure_test server_test sa_test socket_test buffer_test poll_test threadpool_test q_test mq_test mq_ts_test
 
 novadump: nova/novadump.c sniff/tcpsniff.c base/buffer.c nova/Nova.c nova/BinaryData.c
 	$(CC) -std=c99 -g -Wall -lpcap -o $@ $^
@@ -6,7 +6,7 @@ novadump: nova/novadump.c sniff/tcpsniff.c base/buffer.c nova/Nova.c nova/Binary
 table_test: base/table_test.c base/table.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-tcpsniff: sniff/tcpsniff_test.c sniff/tcpsniff.c
+sniff_test: net/sniff_test.c net/sniff.c
 	$(CC) -std=c99 -g -Wall -lpcap -o $@ $^
 
 cloure_test: base/closure_test.c
@@ -27,10 +27,10 @@ buffer_test: base/buffer.c base/buffer_test.c
 poll_test: net/poller_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-threadpool_test: threadpool/threadpool.c threadpool/threadpool_test.c
+threadpool_test: base/threadpool.c base/threadpool_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^ -lpthread
 
-q_test: threadpool/queue_test.c
+queue_test: base/queue_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
 mq_test: base/mq.c base/mq_test.c
@@ -41,17 +41,17 @@ mq_ts_test: base/mq.ts.c base/mq_test.c
 
 clean:
 	-rm -f a.out
+	-rm -f test
 	-rm -f novadump
 	-rm -f table_test
-	-rm -f tcpsniff
-	-rm -f test
+	-rm -f sniff_test
 	-rm -f cloure_test
 	-rm -f sa_test
 	-rm -f server_test
 	-rm -f socket_test
 	-rm -f poll_test
 	-rm -f buffer_test
-	-rm -f q_test
+	-rm -f queue_test
 	-rm -f threadpool_test
 	-rm -f mq_test
 	-rm -f mq_ts_test

@@ -19,4 +19,10 @@ void threadpool_submit(struct threadpool *pool, struct threadpool_task *task);
 
 int threadpool_cancel(struct threadpool *pool, struct threadpool_task *task);
 
+// #define GETTID                      \
+//     #ifdef __APPLE__                \
+//         syscall(SYS_thread_selfid); \
+//     #else syscall(SYS_gettid);      \
+//     #endif
+
 #endif

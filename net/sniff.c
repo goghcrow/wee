@@ -14,7 +14,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <assert.h>
-#include "tcpsniff.h"
+#include "sniff.h"
 
 struct tcpsniff_opt;
 
