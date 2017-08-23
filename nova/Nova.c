@@ -102,11 +102,12 @@ static int nova_invoke()
         goto fail;
     }
     
-    socket_shutdownWrite(sockfd);
+    // fucking swoole, reactor 对EPOLLRDHUP事件直接当error处理，关闭
+    // socket_shutdownWrite(sockfd);
     
     // reset buffer
     buf_retrieveAll(nova_buf);
-    
+
     int errno_ = 0;
     for (;;)
     {
@@ -141,7 +142,7 @@ static int nova_invoke()
         fprintf(stderr, "ERROR: too large nova packet size %zd\n", msg_size);
         goto fail;
     }
-
+    
     while (buf_readable(nova_buf) < msg_size)
     {
         ssize_t recv_n = buf_readFd(nova_buf, sockfd, &errno_);
@@ -184,7 +185,7 @@ static int nova_invoke()
     // print json attach
     {
         nova_hdr->attach[nova_hdr->attach_len] = 0;
-        if (strcmp(nova_hdr->attach, "{}") != 0)
+        if (nova_hdr->attach_len && strcmp(nova_hdr->attach, "{}") != 0)
         {
             cJSON *root = cJSON_Parse(nova_hdr->attach);
             if (root)
@@ -318,7 +319,7 @@ int main(int argc, char **argv)
         INVALID_OPT("Missing Host");
     }
 
-    if (atoi(globalArgs.port) <= 0)
+    if (!globalArgs.port || atoi(globalArgs.port) <= 0)
     {
         INVALID_OPT("Missing Port");
     }
