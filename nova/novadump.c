@@ -178,7 +178,6 @@ void pkt_handle(void *ud,
         printf("method=%s\n", t2);
 
         // TODO
-        buf_retrieve(c->buf, buf_peekInt32(c->buf));
         nova_hdr_release(nova_hdr);
     }
 }
