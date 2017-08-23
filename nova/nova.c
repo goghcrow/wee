@@ -16,6 +16,8 @@
 #include "../net/socket.h"
 #include "../base/buffer.h"
 
+extern char *optarg;
+
 struct globalArgs_t
 {
     const char *host;
