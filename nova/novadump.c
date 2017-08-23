@@ -54,6 +54,7 @@ static void pq_dump()
     int i = 0;
     char ip_buf[INET_ADDRSTRLEN];
     
+    int bytes = 0;
     for (; i < 65536; i++)
     {
         q = &PORT_QUEUE[i];
@@ -67,7 +68,9 @@ static void pq_dump()
             c = QUEUE_DATA(el, struct conn, node);
             inet_ntop(AF_INET, &c->ip, ip_buf, INET_ADDRSTRLEN);
             printf("%s:%d %zu\n", ip_buf, c->port, buf_readable(c->buf));
+            bytes += buf_internalCapacity(c->buf);
         }
+        printf("bytes: %d\n", bytes);
     }
 }
 
