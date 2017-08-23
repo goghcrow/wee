@@ -102,7 +102,7 @@ static void pcap_pkt_handler(struct tcpsniff_t *sniff, const struct pcap_pkthdr 
     }
     */
 
-    // 或者 强制类型转换, 不需要自己算, 直接读, 疑问: 这里为什么不用自己ntoh转字节序????????
+    // 或者 强制类型转换, 不需要自己算, 直接读, 这里为什么不用自己ntoh转字节序????????
 
     struct ip *ip_hdr = (struct ip *)(pkt + sniff->dl_hdr_offset);
     int ip_hdr_sz = ip_hdr->ip_hl * 4;

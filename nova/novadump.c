@@ -231,7 +231,7 @@ int main(int argc, char **argv)
     struct tcpsniff_opt opt = {
         .snaplen = 65535,
         .pkt_cnt_limit = 0,
-        .timeout_limit = 10,
+        .timeout_limit = 1000,
         .device = device,
         .filter_exp = "tcp",
         .ud = NULL};
