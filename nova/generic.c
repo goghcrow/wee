@@ -40,7 +40,7 @@ struct buffer *thrift_generic_pack(int seq,
     // pack args
     {
         uint16_t field_id = 1;
-        u_char field_type = TYPE_STRUCT;
+        uint8_t field_type = TYPE_STRUCT;
         buf_appendInt8(buf, field_type);
         buf_appendInt16(buf, field_id);
     }
@@ -49,7 +49,7 @@ struct buffer *thrift_generic_pack(int seq,
     {
         {
             uint16_t field_id = 1;
-            u_char field_type = TYPE_STRING;
+            uint8_t field_type = TYPE_STRING;
             buf_appendInt8(buf, field_type);
             buf_appendInt16(buf, field_id);
             buf_appendInt32(buf, serv_len);
@@ -57,7 +57,7 @@ struct buffer *thrift_generic_pack(int seq,
         }
         {
             uint16_t field_id = 2;
-            u_char field_type = TYPE_STRING;
+            uint8_t field_type = TYPE_STRING;
             buf_appendInt8(buf, field_type);
             buf_appendInt16(buf, field_id);
             buf_appendInt32(buf, method_len);
@@ -65,7 +65,7 @@ struct buffer *thrift_generic_pack(int seq,
         }
         {
             uint16_t field_id = 3;
-            u_char field_type = TYPE_STRING;
+            uint8_t field_type = TYPE_STRING;
             buf_appendInt8(buf, field_type);
             buf_appendInt16(buf, field_id);
             buf_appendInt32(buf, args_len);
