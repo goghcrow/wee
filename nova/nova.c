@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <inttypes.h>
 #include "../base/cJSON.h"
 #include "generic.h"
 #include "novacodec.h"
@@ -135,12 +136,12 @@ static int nova_invoke()
     int32_t msg_size = buf_peekInt32(nova_buf);
     if (msg_size <= 0)
     {
-        fprintf(stderr, "ERROR: Invalid nova packet size %zd\n", msg_size);
+        fprintf(stderr, "ERROR: Invalid nova packet size %" PRId32  "\n", msg_size);
         goto fail;
     }
     else if (msg_size > 1024 * 1024 * 2)
     {
-        fprintf(stderr, "ERROR: too large nova packet size %zd\n", msg_size);
+        fprintf(stderr, "ERROR: too large nova packet size %" PRId32 "\n", msg_size);
         goto fail;
     }
     
