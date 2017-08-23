@@ -2,9 +2,9 @@
 #define SNIFF_H
 
 #include <pcap/pcap.h>
-#define __USE_BSD
+// #define __USE_BSD
 #include <netinet/ip.h>
-#define __FAVOR_BSD
+// #define __FAVOR_BSD
 #include <netinet/tcp.h>
 #include <stdbool.h>
 #include <stddef.h>
