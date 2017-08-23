@@ -2,9 +2,13 @@
 #include <pcap/bpf.h>
 #include <pcap/sll.h>
 #include <net/ethernet.h>
-// #define __USE_BSD
+#ifndef __USE_BSD
+#define __USE_BSD
+#endif
 #include <netinet/ip.h>
-// #define __FAVOR_BSD
+#ifndef __FAVOR_BSD
+#define __FAVOR_BSD
+#endif
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <stdio.h>
