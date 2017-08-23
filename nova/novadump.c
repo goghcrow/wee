@@ -24,7 +24,7 @@ static struct conn *conn_create(uint32_t ip, uint16_t port)
     memset(c, 0, sizeof(*c));
     c->ip = ip;
     c->port = port;
-    c->buf = buf_create(1024);
+    c->buf = buf_create(8192);
     return c;
 }
 
@@ -207,7 +207,7 @@ void pkt_handle(void *ud,
         // TODO
         nova_hdr_release(nova_hdr);
 
-        if (buf_internalCapacity(c->buf) > 1024 * 100)
+        if (buf_internalCapacity(c->buf) > 1024 * 1024)
         {
             buf_shrink(c->buf, 0);
         }
