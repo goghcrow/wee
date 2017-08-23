@@ -10,5 +10,5 @@ novadump: novadump.c novacodec.c ../base/buffer.c ../net/sniff.c
 clean:
 	-rm -f nova
 	-rm -f novadump
-	-rf -f novadump-dev
-	-rm -fr *.dSYM
+	-rm -f novadump-dev
+	-rm -rf *.dSYM
