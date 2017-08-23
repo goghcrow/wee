@@ -53,7 +53,7 @@ static void pq_dump()
     struct conn *c;
     int i = 0;
     char ip_buf[INET_ADDRSTRLEN];
-    
+
     int bytes = 0;
     for (; i < 65536; i++)
     {
@@ -206,6 +206,11 @@ void pkt_handle(void *ud,
 
         // TODO
         nova_hdr_release(nova_hdr);
+
+        if (buf_internalCapacity(c->buf) > 1024 * 100)
+        {
+            buf_shrink(c->buf, 0);
+        }
     }
 }
 
