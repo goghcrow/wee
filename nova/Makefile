@@ -1,6 +1,10 @@
 nova: nova.c novacodec.c generic.c ../base/cJSON.c ../base/buffer.c ../net/socket.c
 	$(CC) -std=c99 -D_GNU_SOURCE -g -Wall -o $@ $^
 
+novadump: novadump.c novacodec.c ../base/buffer.c ../net/sniff.c
+	$(CC) -std=c99 -D_GNU_SOURCE -lpcap -g -Wall -o $@ $^
+
 clean:
-	-rm nova
-	-rm -r *.dSYM
+	-rm -f nova
+	-rm -f novadump
+	-rm -fr *.dSYM

@@ -3,10 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+
 #include "../net/sniff.h"
 #include "../base/buffer.h"
 #include "../base/queue.h"
-#include "nova.h"
+#include "novacodec.h"
 
 struct conn
 {
@@ -16,7 +17,7 @@ struct conn
     QUEUE node;
 };
 
-struct conn *conn_create(uint32_t ip, uint16_t port)
+static struct conn *conn_create(uint32_t ip, uint16_t port)
 {
     struct conn *c = malloc(sizeof(*c));
     assert(c);
@@ -27,7 +28,7 @@ struct conn *conn_create(uint32_t ip, uint16_t port)
     return c;
 }
 
-void conn_release(struct conn *c)
+static void conn_release(struct conn *c)
 {
     assert(c);
     buf_release(c->buf);
@@ -36,7 +37,7 @@ void conn_release(struct conn *c)
 
 static QUEUE PORT_QUEUE[65536];
 
-void pq_init()
+static void pq_init()
 {
     int i = 0;
     for (; i < 65536; i++)
@@ -45,7 +46,7 @@ void pq_init()
     }
 }
 
-struct conn *pq_get(uint32_t ip, uint16_t port, int remove)
+static struct conn *pq_get_remove(uint32_t ip, uint16_t port, int remove)
 {
     QUEUE *q = &PORT_QUEUE[port];
     if (QUEUE_EMPTY(q))
@@ -72,10 +73,20 @@ struct conn *pq_get(uint32_t ip, uint16_t port, int remove)
     }
 }
 
+static struct conn *pq_get(uint32_t ip, uint16_t port)
+{
+    return pq_get_remove(ip, port, 0);
+}
+
+struct conn *pq_del(uint32_t ip, uint16_t port)
+{
+    return pq_get_remove(ip, port, 1);
+}
+
 void pq_set(struct conn *c)
 {
     QUEUE *q = &PORT_QUEUE[c->port];
-    if (pq_get(c->ip, c->port, 0) == NULL)
+    if (pq_get(c->ip, c->port) == NULL)
     {
         QUEUE_INSERT_TAIL(q, &c->node);
     }
@@ -85,18 +96,6 @@ void pq_set(struct conn *c)
     }
 }
 
-void print_bytes(const char *payload, size_t size)
-{
-    const char *tmp_ptr = payload;
-    int byte_cnt = 0;
-    while (byte_cnt++ < size)
-    {
-        printf("%c", *tmp_ptr);
-        tmp_ptr++;
-    }
-    printf("\n");
-}
-
 void pkt_handle(void *ud,
                 const struct pcap_pkthdr *pkt_hdr,
                 const struct ip *ip_hdr,
@@ -104,23 +103,31 @@ void pkt_handle(void *ud,
                 const u_char *payload, size_t payload_size)
 {
 
-    // char ip_buf[INET_ADDRSTRLEN];
-    // printf("+-------------------------+\n");
-    // printf("   ACK: %u\n", ntohl(tcp_hdr->th_ack));
-    // printf("   SEQ: %u\n", ntohl(tcp_hdr->th_seq));
+    char ip_buf[INET_ADDRSTRLEN];
+    printf("+-------------------------+\n");
+    printf("   ACK: %u\n", ntohl(tcp_hdr->th_ack));
+    printf("   SEQ: %u\n", ntohl(tcp_hdr->th_seq));
 
-    // inet_ntop(AF_INET, &(ip_hdr->ip_dst.s_addr), ip_buf, INET_ADDRSTRLEN);
-    // printf("   DST IP: %s\n", ip_buf);
-    // inet_ntop(AF_INET, &(ip_hdr->ip_src.s_addr), ip_buf, INET_ADDRSTRLEN);
-    // printf("   SRC IP: %s\n", ip_buf);
+    inet_ntop(AF_INET, &(ip_hdr->ip_dst.s_addr), ip_buf, INET_ADDRSTRLEN);
+    printf("   DST IP: %s\n", ip_buf);
+    inet_ntop(AF_INET, &(ip_hdr->ip_src.s_addr), ip_buf, INET_ADDRSTRLEN);
+    printf("   SRC IP: %s\n", ip_buf);
 
-    // printf("   SRC PORT: %d\n", ntohs(tcp_hdr->th_sport));
-    // printf("   DST PORT: %d\n", ntohs(tcp_hdr->th_dport));
+    printf("   SRC PORT: %d\n", ntohs(tcp_hdr->th_sport));
+    printf("   DST PORT: %d\n", ntohs(tcp_hdr->th_dport));
 
-    // AND RST
+    struct conn *c;
+    uint32_t ip = ip_hdr->ip_src.s_addr;
+    uint16_t port = tcp_hdr->th_sport;
+
     if (tcp_hdr->th_flags & TH_FIN || tcp_hdr->th_flags & TH_RST)
     {
-        struct conn *c = pq_get(ip_hdr->ip_src.s_addr, tcp_hdr->th_sport, 1);
+        c = pq_del(ip, port);
+        if (c)
+        {
+            conn_release(c);
+        }
+        c = pq_del(ip_hdr->ip_dst.s_addr, tcp_hdr->th_dport);
         if (c)
         {
             conn_release(c);
@@ -128,13 +135,13 @@ void pkt_handle(void *ud,
     }
     else if (/*(tcp_hdr->th_flags & TH_PUSH) &&*/ payload_size)
     {
-        // print_bytes((char *)payload, payload_size);
-        struct conn *c = pq_get(ip_hdr->ip_src.s_addr, tcp_hdr->th_sport, 0);
+
+        c = pq_get(ip, port);
         if (c == NULL)
         {
-            if (swNova_IsNovaPack((const char *)payload, payload_size))
+            if (nova_detect((const char *)payload, payload_size))
             {
-                c = conn_create(ip_hdr->ip_src.s_addr, tcp_hdr->th_sport);
+                c = conn_create(ip, port);
                 pq_set(c);
             }
             else
@@ -144,18 +151,21 @@ void pkt_handle(void *ud,
             }
         }
         buf_append(c->buf, (const char *)payload, payload_size);
-        if (buf_readable(c->buf) < 4)
-        {
-            return;
-        }
-
         if (buf_peekInt32(c->buf) > buf_readable(c->buf))
         {
+            // 数据不足一个nova包
             return;
         }
 
-        swNova_Header *nova_hdr = createNovaHeader();
-        swNova_unpack((char *)buf_peek(c->buf), buf_readable(c->buf), nova_hdr);
+        struct nova_hdr *nova_hdr = nova_hdr_create();
+        if (!nova_unpack(c->buf, nova_hdr))
+        {
+            fprintf(stderr, "nova_unpack fail\n");
+            c = pq_del(ip, port);
+            conn_release(c);
+            nova_hdr_release(nova_hdr);
+            return;
+        }
 
         char t1[nova_hdr->service_len + 1];
         memcpy(t1, nova_hdr->service_name, nova_hdr->service_len);
@@ -169,7 +179,7 @@ void pkt_handle(void *ud,
 
         // TODO
         buf_retrieve(c->buf, buf_peekInt32(c->buf));
-        deleteNovaHeader(nova_hdr);
+        nova_hdr_release(nova_hdr);
     }
 }
 
@@ -198,6 +208,7 @@ int main(int argc, char **argv)
     if (!tcpsniff(&opt, pkt_handle))
     {
         fprintf(stderr, "fail to sniff\n");
+        exit(1);
     }
     return 0;
 }

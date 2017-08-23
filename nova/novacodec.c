@@ -26,15 +26,15 @@ void nova_hdr_release(struct nova_hdr *hdr)
     free(hdr);
 }
 
-bool nova_detect(struct buffer *buf)
+bool nova_detect(const char* buf, size_t size)
 {
-    if (buf_readable(buf) < NOVA_HEADER_COMMON_LEN)
+    if (size < NOVA_HEADER_COMMON_LEN)
     {
         return false;
     }
 
     int16_t magic = 0;
-    memcpy(&magic, buf_peek(buf) + 4, sizeof(int16_t));
+    memcpy(&magic, buf + 4, sizeof(int16_t));
     return be16toh(magic) == NOVA_MAGIC;
 }
 

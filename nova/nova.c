@@ -164,7 +164,7 @@ static int nova_invoke()
         }
     }
 
-    if (!nova_detect(nova_buf))
+    if (!nova_detect(buf_peek(nova_buf), buf_readable(nova_buf)))
     {
         fprintf(stderr, "ERROR, invalid nova packet\n");
         goto fail;

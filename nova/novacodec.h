@@ -29,7 +29,7 @@ struct nova_hdr *nova_hdr_create();
 
 void nova_hdr_release(struct nova_hdr *hdr);
 
-bool nova_detect(struct buffer *);
+bool nova_detect(const char* buf, size_t size);
 
 void nova_pack(struct buffer *, struct nova_hdr *hdr, const char *body, size_t body_size);
 
