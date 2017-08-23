@@ -191,7 +191,7 @@ void pkt_handle(void *ud,
             c = pq_del(ip, port);
             conn_release(c);
             nova_hdr_release(nova_hdr);
-            return;
+            exit(1);
         }
 
         char t1[nova_hdr->service_len + 1];
