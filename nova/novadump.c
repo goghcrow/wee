@@ -11,8 +11,8 @@
 
 struct conn
 {
-    uint32_t ip;
-    uint16_t port;
+    uint32_t ip;   // 网络字节序
+    uint16_t port; // 本机字节序
     struct buffer *buf;
     QUEUE node;
 };
@@ -43,6 +43,31 @@ static void pq_init()
     for (; i < 65536; i++)
     {
         QUEUE_INIT(&PORT_QUEUE[i]);
+    }
+}
+
+static void pq_dump()
+{
+    QUEUE *q;
+    QUEUE *el;
+    struct conn *c;
+    int i = 0;
+    char ip_buf[INET_ADDRSTRLEN];
+    
+    for (; i < 65536; i++)
+    {
+        q = &PORT_QUEUE[i];
+        if (QUEUE_EMPTY(q))
+        {
+            continue;
+        }
+
+        QUEUE_FOREACH(el, q)
+        {
+            c = QUEUE_DATA(el, struct conn, node);
+            inet_ntop(AF_INET, &c->ip, ip_buf, INET_ADDRSTRLEN);
+            printf("%s:%d\n", ip_buf, c->port);
+        }
     }
 }
 
@@ -118,7 +143,7 @@ void pkt_handle(void *ud,
 
     struct conn *c;
     uint32_t ip = ip_hdr->ip_src.s_addr;
-    uint16_t port = tcp_hdr->th_sport;
+    uint16_t port = ntohs(tcp_hdr->th_sport);
 
     if (tcp_hdr->th_flags & TH_FIN || tcp_hdr->th_flags & TH_RST)
     {
@@ -127,7 +152,7 @@ void pkt_handle(void *ud,
         {
             conn_release(c);
         }
-        c = pq_del(ip_hdr->ip_dst.s_addr, tcp_hdr->th_dport);
+        c = pq_del(ip_hdr->ip_dst.s_addr, ntohs(tcp_hdr->th_dport));
         if (c)
         {
             conn_release(c);
