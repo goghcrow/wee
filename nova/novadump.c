@@ -103,18 +103,18 @@ void pkt_handle(void *ud,
                 const u_char *payload, size_t payload_size)
 {
 
-    char ip_buf[INET_ADDRSTRLEN];
-    printf("+-------------------------+\n");
-    printf("   ACK: %u\n", ntohl(tcp_hdr->th_ack));
-    printf("   SEQ: %u\n", ntohl(tcp_hdr->th_seq));
+    // char ip_buf[INET_ADDRSTRLEN];
+    // printf("+-------------------------+\n");
+    // printf("   ACK: %u\n", ntohl(tcp_hdr->th_ack));
+    // printf("   SEQ: %u\n", ntohl(tcp_hdr->th_seq));
 
-    inet_ntop(AF_INET, &(ip_hdr->ip_dst.s_addr), ip_buf, INET_ADDRSTRLEN);
-    printf("   DST IP: %s\n", ip_buf);
-    inet_ntop(AF_INET, &(ip_hdr->ip_src.s_addr), ip_buf, INET_ADDRSTRLEN);
-    printf("   SRC IP: %s\n", ip_buf);
+    // inet_ntop(AF_INET, &(ip_hdr->ip_dst.s_addr), ip_buf, INET_ADDRSTRLEN);
+    // printf("   DST IP: %s\n", ip_buf);
+    // inet_ntop(AF_INET, &(ip_hdr->ip_src.s_addr), ip_buf, INET_ADDRSTRLEN);
+    // printf("   SRC IP: %s\n", ip_buf);
 
-    printf("   SRC PORT: %d\n", ntohs(tcp_hdr->th_sport));
-    printf("   DST PORT: %d\n", ntohs(tcp_hdr->th_dport));
+    // printf("   SRC PORT: %d\n", ntohs(tcp_hdr->th_sport));
+    // printf("   DST PORT: %d\n", ntohs(tcp_hdr->th_dport));
 
     struct conn *c;
     uint32_t ip = ip_hdr->ip_src.s_addr;
@@ -135,7 +135,6 @@ void pkt_handle(void *ud,
     }
     else if (/*(tcp_hdr->th_flags & TH_PUSH) &&*/ payload_size)
     {
-
         c = pq_get(ip, port);
         if (c == NULL)
         {
