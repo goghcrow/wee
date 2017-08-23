@@ -66,7 +66,7 @@ static void pq_dump()
         {
             c = QUEUE_DATA(el, struct conn, node);
             inet_ntop(AF_INET, &c->ip, ip_buf, INET_ADDRSTRLEN);
-            printf("%s:%d\n", ip_buf, c->port);
+            printf("%s:%d %zu\n", ip_buf, c->port, buf_readable(c->buf));
         }
     }
 }
