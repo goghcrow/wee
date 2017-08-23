@@ -16,7 +16,6 @@
 #define be64toh(x) OSSwapBigToHostInt64(x)
 #define le64toh(x) OSSwapLittleToHostInt64(x)
 #else
-#define _BSD_SOURCE
 #include <endian.h>
 #endif
 
