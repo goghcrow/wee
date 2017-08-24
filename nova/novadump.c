@@ -46,6 +46,31 @@ static void pq_init()
     }
 }
 
+static void pq_release()
+{
+    QUEUE *q;
+    QUEUE *el;
+    struct conn *c;
+    int i = 0;
+    char ip_buf[INET_ADDRSTRLEN];
+
+    int bytes = 0;
+    for (; i < 65536; i++)
+    {
+        q = &PORT_QUEUE[i];
+        if (QUEUE_EMPTY(q))
+        {
+            continue;
+        }
+
+        QUEUE_FOREACH(el, q)
+        {
+            c = QUEUE_DATA(el, struct conn, node);
+            conn_release(c);
+        }
+    }
+}
+
 static void pq_dump()
 {
     QUEUE *q;
