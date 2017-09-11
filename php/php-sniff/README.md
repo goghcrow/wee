@@ -28,6 +28,17 @@ $option = [
 ];
 ```
 
+### install
+
+```
+sudo yum-test install -y libpcap-devel.x86_64
+sudo yum-test install -y yz-php7-devel.x86_64
+phpize --clean
+phpize
+./configure
+make
+```
+
 ### 说明
 
 0. PHP7 only
