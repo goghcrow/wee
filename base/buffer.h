@@ -10,7 +10,8 @@ struct buffer;
 
 struct buffer *buf_create(size_t size);
 void buf_release(struct buffer *buf);
-
+size_t buf_getWriteIndex(struct buffer *buf);
+void buf_setWriteIndex(struct buffer *buf, size_t write_idx);
 size_t buf_readable(struct buffer *buf);
 size_t buf_writable(struct buffer *buf);
 size_t buf_prependable(struct buffer *buf);
@@ -28,6 +29,7 @@ void buf_retrieveInt64(struct buffer *buf);
 void buf_retrieveInt32(struct buffer *buf);
 void buf_retrieveInt16(struct buffer *buf);
 void buf_retrieveInt8(struct buffer *buf);
+void buf_ensureWritable(struct buffer *buf, size_t len);
 void buf_append(struct buffer *buf, const char *data, size_t len);
 void buf_prepend(struct buffer *buf, const char *data, size_t len);
 void buf_shrink(struct buffer *buf, size_t reserve);

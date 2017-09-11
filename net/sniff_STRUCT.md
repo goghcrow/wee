@@ -48,7 +48,7 @@ http://unix.superglobalmegacorp.com/BSD4.4/newsrc/netinet/ip.h.html
 struct ip {
 #if BYTE_ORDER == LITTLE_ENDIAN 
 	u_char	ip_hl:4,		/* header length */
-		    ip_v:4;			/* version */
+		ip_v:4;			/* version */
 #endif
 #if BYTE_ORDER == BIG_ENDIAN 
 	u_char	ip_v:4,			/* version */

@@ -7,7 +7,7 @@
 #include "../net/sniff.h"
 #include "../base/buffer.h"
 #include "../base/queue.h"
-#include "novacodec.h"
+#include "codec.h"
 
 struct conn
 {

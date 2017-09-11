@@ -12,7 +12,7 @@
 #include <inttypes.h>
 #include "../base/cJSON.h"
 #include "generic.h"
-#include "novacodec.h"
+#include "codec.h"
 #include "../net/socket.h"
 #include "../base/buffer.h"
 

@@ -168,6 +168,28 @@ void test11()
     buf_release(buf);
 }
 
+// save set write idx 用法
+void test12()
+{
+    struct buffer *buf = buf_create(10);
+    size_t save_idx = buf_getWriteIndex(buf);
+    assert(save_idx == buf_prependable(buf));
+    // 暂时跳过2字节
+    buf_setWriteIndex(buf, save_idx + 2);
+    
+    char * hello = "HELLO";
+    char * x = "::";
+    
+    buf_append(buf, hello, strlen(hello));
+    size_t save_idx2 = buf_getWriteIndex(buf);
+    buf_setWriteIndex(buf, save_idx);
+    buf_append(buf, x, 2);
+    buf_setWriteIndex(buf, save_idx2);
+    
+    printf("%7s\n", buf_peek(buf));
+    buf_release(buf);
+}
+
 int main(void)
 {
     test1();
@@ -181,5 +203,6 @@ int main(void)
     test9();
     test10();
     test11();
+    test12();
     return 0;
 }

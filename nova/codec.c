@@ -5,7 +5,7 @@
 #include <assert.h>
 #include "../base/endian.h"
 #include "../base/buffer.h"
-#include "novacodec.h"
+#include "codec.h"
 
 struct nova_hdr;
 

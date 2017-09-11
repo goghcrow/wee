@@ -47,8 +47,8 @@ static void pcap_pkt_handler(struct tcpsniff_t *sniff, const struct pcap_pkthdr 
     if (pkt_hdr->caplen != pkt_hdr->len)
     {
         fprintf(stderr, "Packet length is %d bytes, but only %d bytes captured\n", pkt_hdr->len, pkt_hdr->caplen);
-        pcap_close(sniff->handle);
-        exit(1);
+        // pcap_close(sniff->handle);
+        // exit(1);
     }
 
     u_int16_t protocol = ETHERTYPE_IP;
@@ -165,7 +165,7 @@ bool tcpsniff(struct tcpsniff_opt *opt, tcpsniff_pkt_handler pkt_handler)
 
     // data link type 参见 #include <pcap/bpf.h>
     sniff.dl_type = pcap_datalink(sniff.handle);
-    fprintf(stderr, "datalink type is %d\n", sniff.dl_type);
+    // fprintf(stderr, "datalink type is %d\n", sniff.dl_type);
     switch (sniff.dl_type)
     {
     case DLT_NULL: /* BSD loopback encapsulation */

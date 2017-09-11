@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include "generic.h"
-#include "novacodec.h"
+#include "codec.h"
 #include "../base/buffer.h"
 
 #define GENERIC_SERVICE "com.youzan.nova.framework.generic.service.GenericService"

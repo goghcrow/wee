@@ -43,6 +43,17 @@ void buf_release(struct buffer *buf)
     free(buf);
 }
 
+size_t buf_getWriteIndex(struct buffer *buf)
+{
+    return buf->write_idx - buf->buf;
+}
+
+void buf_setWriteIndex(struct buffer *buf, size_t write_idx)
+{
+    assert(write_idx >= (buf->read_idx - buf->buf) && write_idx < buf->sz);
+    buf->write_idx = buf->buf + write_idx;
+}
+
 size_t buf_readable(struct buffer *buf)
 {
     return buf->write_idx - buf->read_idx;
@@ -176,7 +187,7 @@ static void buf_makeSpace(struct buffer *buf, size_t len)
     assert(readable == buf_readable(buf));
 }
 
-static void buf_ensureWritable(struct buffer *buf, size_t len)
+void buf_ensureWritable(struct buffer *buf, size_t len)
 {
     if (buf_writable(buf) < len)
     {
