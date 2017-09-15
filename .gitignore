@@ -1,3 +1,4 @@
 nova_client
 .vscode
 *.dSYM
+php-ext
