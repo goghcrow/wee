@@ -1,6 +1,8 @@
 #ifndef SOCKET_H
 #define SOCKET_H
 
+#define _GNU_SOURCE
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/uio.h>
@@ -163,6 +165,12 @@ size_t socket_recvAllSync(int sockfd, char *buf, size_t size)
             {
                 continue;
             }
+            else
+            {
+                perror("ERROR recv");
+                recved = -1;
+                break;
+            }
         }
         else if (n == 0)
         {
@@ -170,10 +178,8 @@ size_t socket_recvAllSync(int sockfd, char *buf, size_t size)
         }
         else
         {
-            perror("ERROR recv");
-            break;
+            recved += n;
         }
-        recved += n;
     }
 
     return recved;
@@ -241,7 +247,7 @@ static int socket_create_(bool nonblock)
     return sockfd;
 }
 
-// 使用 struct sockaddr_storage 来接受, 转成 struct sockaddr 所以需要addr_len
+// 使用 struct sockaddr_storage 来接收, 转成 struct sockaddr 所以需要addr_len
 static int socket_accept_(int sockfd, union sockaddr_all *addr, socklen_t *addrlen, bool nonblock)
 {
 #ifdef __APPLE__
@@ -306,6 +312,7 @@ static int socket_ctor(const char *host, const char *port, bool nonblock)
     int status = getaddrinfo(host, port, &hints, &servinfo);
     if (status != 0)
     {
+        // gai_strerror --> getaddrinfo_strerror
         fprintf(stderr, "ERROR getaddrinfo: %s\n", gai_strerror(status));
         return -1;
     }
@@ -318,7 +325,7 @@ static int socket_ctor(const char *host, const char *port, bool nonblock)
 #ifdef __APPLE__
         sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
 #else
-        // linux 内核高版本可以直接设置 SOCK_NONBLOCK | SOCK_CLOEXEC,生一次fcntl系统调用
+        // linux 内核高版本可以直接设置 SOCK_NONBLOCK | SOCK_CLOEXEC, 节省一次fcntl系统调用
         sockfd = socket(p->ai_family, p->ai_socktype | (nonblock ? SOCK_NONBLOCK : 0) | SOCK_CLOEXEC, p->ai_protocol);
 #endif
 
@@ -340,34 +347,34 @@ static int socket_ctor(const char *host, const char *port, bool nonblock)
         {
             if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) < 0)
             {
-                // perror("ERROR setsockopt SO_REUSEADDR");
-                // close(sockfd);
-                // return -1;
+                perror("ERROR setsockopt SO_REUSEADDR");
+                close(sockfd);
+                return -1;
             }
 
 #ifdef SO_REUSEPORT
             if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes)) < 0)
             {
-                // perror("ERROR setsockopt SO_REUSEPORT");
-                // close(sockfd);
-                // return -1;
+                perror("ERROR setsockopt SO_REUSEPORT");
+                close(sockfd);
+                return -1;
             }
 #endif
 
             if (setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(int)) < 0)
             {
 
-                // perror("ERROR setsockopt SO_KEEPALIVE");
-                // close(sockfd);
-                // return -1;
+                perror("ERROR setsockopt SO_KEEPALIVE");
+                close(sockfd);
+                return -1;
             }
         }
 
         if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) < 0)
         {
-            // perror("ERROR setsockopt TCP_NODELAY");
-            // close(sockfd);
-            // return -1;
+            perror("ERROR setsockopt TCP_NODELAY");
+            close(sockfd);
+            return -1;
         }
 
         // SO_REUSEADDR needs to be set before bind().

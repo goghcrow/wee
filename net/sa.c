@@ -1,6 +1,8 @@
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <strings.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <assert.h>
