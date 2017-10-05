@@ -6,9 +6,9 @@
 void *func_wait(void *ud)
 {
     struct waiter *w = (struct waiter *)ud;
-    puts("start wait");
+    puts("waiting...");
     waiter_wait(w);
-    puts("end wait");
+    puts("waited");
     return NULL;
 }
 
@@ -16,18 +16,19 @@ void *func_signal(void *ud)
 {
     struct waiter *w = (struct waiter *)ud;
     sleep(1);
-    puts("start signal");
     waiter_signal(w);
-    puts("end signal");
+    puts("signal");
     return NULL;
 }
 
 #define N_WAIT 5
-int main(int argc, char **argv)
+
+int main(void)
 {
     int i;
     pthread_t wait_threads[N_WAIT];
     pthread_t signal_thread;
+
     struct waiter *w = waiter_create();
 
     for (i = 0; i < N_WAIT; i++)
@@ -41,9 +42,11 @@ int main(int argc, char **argv)
         pthread_join(wait_threads[i], NULL);
     }
     pthread_join(signal_thread, NULL);
+
     waiter_release(w);
+
     puts("done");
-    
+
     // // 如果使用pthread_exit 等待所有进程结束
     // pthread_exit(NULL);
     // // 以下并不会执行 !!!!!

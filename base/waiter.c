@@ -1,46 +1,47 @@
-#include <pthread.h>
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include "cond.h"
+#include "mtxlock.h"
 #include "waiter.h"
 
 struct waiter
 {
-    pthread_mutex_t mtx;
-    pthread_cond_t cond;
+    struct mtxlock *lock;
+    struct cond *cond;
     int signaled;
 };
 
 struct waiter *waiter_create()
 {
     struct waiter *w = malloc(sizeof(*w));
+    assert(w);
     memset(w, 0, sizeof(*w));
-    pthread_mutex_init(&w->mtx, NULL);
-    pthread_cond_init(&w->cond, NULL);
+    w->lock = mtl_create();
+    w->cond = cond_create(w->lock);
     return w;
 }
 
 void waiter_release(struct waiter *w)
 {
-    pthread_mutex_destroy(&w->mtx);
-    pthread_cond_destroy(&w->cond);
+    mtl_release(w->lock);
+    cond_release(w->cond);
     memset(w, 0, sizeof(*w));
     free(w);
 }
 
 void waiter_signal(struct waiter *w)
 {
-    pthread_mutex_lock(&w->mtx);
+    mtl_lock(w->lock);
     w->signaled = 1;
-    pthread_cond_broadcast(&w->cond);
-    pthread_mutex_unlock(&w->mtx);
+    cond_broadcast(w->cond);
+    mtl_unlock(w->lock);
 }
 
 void waiter_wait(struct waiter *w)
 {
-    pthread_mutex_lock(&w->mtx);
     while (!w->signaled)
     {
-        pthread_cond_wait(&w->cond, &w->mtx);
+        cond_wait(w->cond);
     }
-    pthread_mutex_unlock(&w->mtx);
 }

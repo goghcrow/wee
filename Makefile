@@ -39,14 +39,22 @@ mq_test: base/mq.c base/mq_test.c
 mq_ts_test: base/mq.ts.c base/mq_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-forward_test: net/sa.c net/socket.c net/socket_forward_test.c
+forward_test: net/sa.c net/socket.c net/socket_forward_test.c base/waitgroup.c
 	$(CC) -std=gnu99 -g -Wall -o $@ $^ -lpthread
 
-waiter_test: base/waiter.c base/waiter_test.c
+mtxlock_test: base/mtxlock.c base/mtxlock_test.c
+	$(CC) -std=c99 -g -Wall -o $@ $^ -lpthread
+
+cond_test: base/mtxlock.c base/cond.c base/cond_test.c
+	$(CC) -std=c99 -g -Wall -o $@ $^ -lpthread
+
+
+waiter_test: base/mtxlock.c base/cond.c base/waiter.c base/waiter_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^ -lpthread
 
 waitgroup_test: base/waitgroup.c base/waitgroup_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^ -lpthread
+
 
 clean:
 	-rm -f a.out
@@ -65,6 +73,8 @@ clean:
 	-rm -f mq_test
 	-rm -f mq_ts_test
 	-rm -f forward_test
+	-rm -f mtxlock_test
+	-rm -f cond_test
 	-rm -f waiter_test
 	-rm -f waitgroup_test
 	-rm -rf *.dSYM

@@ -4,7 +4,7 @@
 #include <assert.h>
 #include "mq.h"
 
-// -> head -> tail -> 
+// -> head -> tail ->
 struct mq
 {
     int head;
@@ -21,6 +21,7 @@ safe_malloc(int n, char *file, unsigned long line)
     if (!p)
     {
         fprintf(stderr, "malloc %lu bytes fail in %s:%lu", (unsigned long)n, file, line);
+        exit(1);
     }
     memset(p, 0, n);
     return p;
