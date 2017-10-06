@@ -12,6 +12,8 @@ struct waiter
     int signaled;
 };
 
+
+#include <stdio.h>
 struct waiter *waiter_create()
 {
     struct waiter *w = malloc(sizeof(*w));
@@ -40,8 +42,10 @@ void waiter_signal(struct waiter *w)
 
 void waiter_wait(struct waiter *w)
 {
+    mtl_lock(w->lock);
     while (!w->signaled)
     {
         cond_wait(w->cond);
     }
+    mtl_unlock(w->lock);
 }

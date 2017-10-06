@@ -11,7 +11,7 @@ void test2()
 {
     int i;
     struct msg msg;
-    int ret;
+    bool ret;
 
     struct mq *q = mq_create(INIT_CAP);
     for (i = 0; i < 100; i++)
@@ -33,14 +33,14 @@ void test2()
     for (i = 0; i < 100; i++)
     {
         ret = mq_pop(q, &msg);
-        assert(ret == 0);
+        assert(ret);
         printf("%s\t", msg.ud);
 
         free(msg.ud);
     }
 
     ret = mq_pop(q, &msg);
-    assert(ret == 1);
+    assert(!ret);
 
     mq_release(q);
 }
