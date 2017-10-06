@@ -13,7 +13,7 @@ struct mq
     int tail;
     int cap;
     struct msg *q;
-    /* struct mq *next; */
+/* struct mq *next; */
 #ifdef MQ_THREAD_SAFE
     pthread_mutex_t mutex;
 #endif

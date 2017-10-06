@@ -6,17 +6,19 @@
 #include "chan.h"
 #include "thread.h"
 
-
 void *consumer(void *ud)
 {
+    int tid = thread_getid();
+
     struct chan *ch = (struct chan *)ud;
     struct msg msg;
-    int tid = thread_getid();
 
     while (1)
     {
-        if (ch_recv(ch, &msg)) {
-            printf("tid=%d consumer %s\n", tid, msg.ud);
+        printf("tid=%d consuming...\n", tid);
+        if (ch_recv(ch, &msg))
+        {
+            printf("[OK]tid=%d consumed %s\n", tid, msg.ud);
             free(msg.ud);
         }
     }
@@ -25,32 +27,31 @@ void *consumer(void *ud)
 
 void *producer(void *ud)
 {
+    int tid = thread_getid();
+
     struct chan *ch = (struct chan *)ud;
     struct msg msg;
     int i = 0;
     char buf[100];
     while (1)
     {
+        printf("tid=%d producing...\n", tid);
         snprintf(buf, 100, "msg %d", ++i);
         msg.ud = strdup(buf);
         msg.sz = strlen(buf);
-        puts("producer send");
         ch_send(ch, &msg);
-        usleep(100 * 1000);
+        printf("[OK]tid=%d produced..\n", tid);
+        usleep(500 * 1000);
     }
     return NULL;
 }
-
-#define N_CONSUMER 10
-#define N_PRODUCER 1
-
-int main(void)
+void test_chan(int CHAN_CAP, int N_PRODUCER, int N_CONSUMER)
 {
     int i;
     pthread_t consumers[N_CONSUMER];
     pthread_t producers[N_PRODUCER];
 
-    struct chan *ch = ch_create();
+    struct chan *ch = ch_create(CHAN_CAP);
 
     for (i = 0; i < N_CONSUMER; i++)
     {
@@ -69,6 +70,15 @@ int main(void)
     {
         pthread_join(producers[i], NULL);
     }
+}
 
+
+
+int main(void)
+{
+    // test_chan(0, 1, 10);
+    // test_chan(1, 1, 0);
+    // test_chan(1, 0, 2);
+    test_chan(2, 2, 1);
     return 0;
 }

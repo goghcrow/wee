@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// 环形队列
 struct mq;
 
 struct msg
@@ -13,9 +14,10 @@ struct msg
 };
 
 struct mq *mq_create(int cap);
-void mq_release(struct mq *q);
-int mq_count(struct mq *q);
-void mq_push(struct mq *q, struct msg *msg);
-bool mq_pop(struct mq *q, struct msg *msg);
+void mq_release(struct mq *);
+int mq_count(struct mq *);
+void mq_push(struct mq *, struct msg *);
+bool mq_pop(struct mq *, struct msg *);
+/* fixme  void mq_shrink(); */ 
 
 #endif
