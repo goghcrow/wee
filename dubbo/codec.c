@@ -9,6 +9,8 @@
 #include "../base/buffer.h"
 #include "../base/cJSON.h"
 
+#include "../base/dbg.h"
+
 #define DUBBO_BUF_LEN 8192
 #define DUBBO_HDR_LEN 16
 #define DUBBO_MAGIC 0xdabb
@@ -209,6 +211,7 @@ static bool encode_req_data(struct buffer *buf, const struct dubbo_req *req)
 
     // fixme :  attach NULL
     buf_has_written(buf, hs_encode_null((uint8_t *)buf_beginWrite(buf)));
+
     return true;
 }
 

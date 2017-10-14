@@ -58,7 +58,7 @@ chan_test: base/mtxlock.c base/cond.c base/mq.c base/chan.c base/chan_test.c
 hs_test: dubbo/hessian.c dubbo/hessian_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-dubbo_test: base/cJSON.c base/buffer.c dubbo/hessian.c dubbo/codec.c dubbo/dubbo.c
+dubbo_test: base/cJSON.c base/buffer.c base/dbg.c dubbo/hessian.c dubbo/codec.c dubbo/dubbo.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
 clean:

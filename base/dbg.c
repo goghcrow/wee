@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdarg.h>
 
 
 static void crash_handler(int sig)
@@ -66,8 +67,6 @@ void debugger()
     raise(SIGSEGV);
 }
 
-
-
 /*
 struct sigaction sigact = {0};
 sigact.sa_handler = signal_jit_handler;
@@ -90,3 +89,44 @@ int main(int argc, char **argv)
     return 0;
 }
 */
+
+
+// ****************************************************************************************************
+
+void die(const char *fmt, ...)
+{
+    va_list argp;
+    va_start(argp, fmt);
+    vfprintf(stderr, fmt, argp);
+    va_end(argp);
+    fputc('\n', stderr);
+    exit(1);
+}
+
+// bin to printable
+void bin2p(const char *bin, int sz)
+{
+    char c = '*';
+    int count = 100;
+    int i;
+    for (i = 0; i < count; i++)
+        putchar(c);
+    puts("");
+
+    fwrite(bin, sizeof(char), sz, stdout);
+    puts("");
+
+    for (i = 0; i < count; i++)
+        putchar(c);
+    puts("");
+}
+
+void bin2hex(const char *bin, size_t sz)
+{
+    int i;
+    for (i = 0; i < sz; i++)
+    {
+        printf("0x%02x ", (unsigned char)bin[i]);
+    }
+    putchar('\n');
+}
