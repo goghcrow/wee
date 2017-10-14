@@ -21,6 +21,7 @@ server_test: net/server_test.c net/socket.c net/sa.c
 socket_test: net/socket_test.c net/socket.c net/sa.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
+# buffer_test: base/buffer2.c base/buffer_test.c
 buffer_test: base/buffer.c base/buffer_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
@@ -52,27 +53,35 @@ waitgroup_test: base/waitgroup.c base/waitgroup_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^ -lpthread
 
 chan_test: base/mtxlock.c base/cond.c base/mq.c base/chan.c base/chan_test.c
-	$(CC) -std=c99 -g3 -O0 -Wall -o $@ $^ -lpthread -DMQ_THREAD_SAFE
+	$(CC) -std=c99 -g -Wall -o $@ $^ -lpthread -DMQ_THREAD_SAFE
+
+hs_test: dubbo/hessian.c dubbo/hessian_test.c
+	$(CC) -std=c99 -g -Wall -o $@ $^
+
+dubbo_test: base/cJSON.c base/buffer.c dubbo/hessian.c dubbo/codec.c dubbo/dubbo.c
+	$(CC) -std=c99 -g -Wall -o $@ $^
 
 clean:
-	-rm -f a.out
-	-rm -f test
-	-rm -f novadump
-	-rm -f table_test
-	-rm -f sniff_test
-	-rm -f cloure_test
-	-rm -f sa_test
-	-rm -f server_test
-	-rm -f socket_test
-	-rm -f poll_test
-	-rm -f buffer_test
-	-rm -f queue_test
-	-rm -f threadpool_test
-	-rm -f mq_test
-	-rm -f forward_test
-	-rm -f mtxlock_test
-	-rm -f cond_test
-	-rm -f waiter_test
-	-rm -f waitgroup_test
-	-rm -f chan_test
-	-rm -rf *.dSYM
+	-/bin/rm -f a.out
+	-/bin/rm -f test
+	-/bin/rm -f novadump
+	-/bin/rm -f table_test
+	-/bin/rm -f sniff_test
+	-/bin/rm -f cloure_test
+	-/bin/rm -f sa_test
+	-/bin/rm -f server_test
+	-/bin/rm -f socket_test
+	-/bin/rm -f poll_test
+	-/bin/rm -f buffer_test
+	-/bin/rm -f queue_test
+	-/bin/rm -f threadpool_test
+	-/bin/rm -f mq_test
+	-/bin/rm -f forward_test
+	-/bin/rm -f mtxlock_test
+	-/bin/rm -f cond_test
+	-/bin/rm -f waiter_test
+	-/bin/rm -f waitgroup_test
+	-/bin/rm -f chan_test
+	-/bin/rm -f hs_test
+	-/bin/rm -f dubbo_test
+	-/bin/rm -rf *.dSYM

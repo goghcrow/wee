@@ -8,17 +8,17 @@
 
 void *consumer(void *ud)
 {
-    int tid = thread_getid();
+    uint64_t tid = thread_getid();
 
     struct chan *ch = (struct chan *)ud;
     struct msg msg;
 
     while (1)
     {
-        printf("tid=%d consuming...\n", tid);
+        printf("tid=%llu consuming...\n", tid);
         if (ch_recv(ch, &msg))
         {
-            printf("[OK]tid=%d consumed %s\n", tid, msg.ud);
+            printf("[OK]tid=%llu consumed %s\n", tid, msg.ud);
             free(msg.ud);
         }
     }
@@ -27,7 +27,7 @@ void *consumer(void *ud)
 
 void *producer(void *ud)
 {
-    int tid = thread_getid();
+    uint64_t tid = thread_getid();
 
     struct chan *ch = (struct chan *)ud;
     struct msg msg;
@@ -35,13 +35,13 @@ void *producer(void *ud)
     char buf[100];
     while (1)
     {
-        printf("tid=%d producing...\n", tid);
-        snprintf(buf, 100, "msg %d", ++i);
+        printf("tid=%llu producing...\n", tid);
+        snprintf(buf, 100, "[%llu]msg %d", tid, ++i);
         msg.ud = strdup(buf);
         msg.sz = strlen(buf);
         ch_send(ch, &msg);
-        printf("[OK]tid=%d produced..\n", tid);
-        usleep(500 * 1000);
+        printf("[OK]tid=%llu produced..\n", tid);
+        usleep(100 * 1000);
     }
     return NULL;
 }
@@ -79,6 +79,6 @@ int main(void)
     // test_chan(0, 1, 10);
     // test_chan(1, 1, 0);
     // test_chan(1, 0, 2);
-    test_chan(2, 2, 1);
+    // test_chan(2, 2, 1);
     return 0;
 }

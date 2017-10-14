@@ -35,9 +35,9 @@ void test2()
 void test3()
 {
     struct buffer *buf = buf_create(2);
-    assert(buf_prependable(buf) == 8);
+    assert(buf_prependable(buf) == BufCheapPrepend);
     buf_prependInt32(buf, 42);
-    assert(buf_prependable(buf) == 4);
+    assert(buf_prependable(buf) == BufCheapPrepend - 4);
     buf_release(buf);
 }
 
@@ -67,7 +67,7 @@ void test6()
     struct buffer *buf = buf_create(10);
     assert(buf_writable(buf) == 10);
     assert(buf_readable(buf) == 0);
-    assert(buf_prependable(buf) == 8);
+    assert(buf_prependable(buf) == BufCheapPrepend);
     buf_has_written(buf, 5);
     assert(buf_writable(buf) == 5);
     assert(buf_readable(buf) == 5);
@@ -104,16 +104,16 @@ void test7()
 void test8()
 {
     struct buffer *buf = buf_create(2);
-    assert(buf_internalCapacity(buf) == 8 + 2);
+    assert(buf_internalCapacity(buf) == BufCheapPrepend + 2);
     buf_appendInt32(buf, 42);
     assert(buf_writable(buf) == 0);
-    assert(buf_internalCapacity(buf) == 8 + 2 + 2);
+    assert(buf_internalCapacity(buf) == BufCheapPrepend + 2 + 2);
     buf_retrieve(buf, 4);
     assert(buf_readable(buf) == 0);
     assert(buf_writable(buf) == 4);
-    assert(buf_internalCapacity(buf) == 8 + 2 + 2);
+    assert(buf_internalCapacity(buf) == BufCheapPrepend + 2 + 2);
     buf_shrink(buf, 2);
-    assert(buf_internalCapacity(buf) == 8 + 2);
+    assert(buf_internalCapacity(buf) == BufCheapPrepend + 2);
     buf_release(buf);
 }
 

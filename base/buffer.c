@@ -7,24 +7,24 @@
 #include "endian.h"
 #include "buffer.h"
 
-#define CheapPrepend 8
-#define InitialSize 1024
-
 struct buffer
 {
     size_t read_idx;
     size_t write_idx;
     size_t sz;
     char *buf;
+    size_t p_sz;
 };
 
-struct buffer *buf_create(size_t size)
+struct buffer *buf_create_ex(size_t size, size_t prepend_size)
 {
+    assert(prepend_size >= 0);
+
     if (size == 0)
     {
         size = 1024;
     }
-    size_t sz = size + CheapPrepend;
+    size_t sz = size + prepend_size;
     struct buffer *buf = malloc(sizeof(*buf));
     assert(buf);
     memset(buf, 0, sizeof(*buf));
@@ -32,8 +32,9 @@ struct buffer *buf_create(size_t size)
     assert(buf->buf);
     memset(buf->buf, 0, sz);
     buf->sz = sz;
-    buf->read_idx = CheapPrepend;
-    buf->write_idx = CheapPrepend;
+    buf->read_idx = prepend_size;
+    buf->write_idx = prepend_size;
+    buf->p_sz = prepend_size;
     return buf;
 }
 
@@ -111,8 +112,8 @@ void buf_retrieveAsString(struct buffer *buf, size_t len, char *str)
 
 void buf_retrieveAll(struct buffer *buf)
 {
-    buf->read_idx = CheapPrepend;
-    buf->write_idx = CheapPrepend;
+    buf->read_idx = buf->p_sz;
+    buf->write_idx = buf->p_sz;
 }
 
 void buf_retrieve(struct buffer *buf, size_t len)
@@ -162,7 +163,7 @@ static void buf_swap(struct buffer *buf, size_t nsz)
     void *nbuf = malloc(nsz);
     assert(nbuf);
     memset(nbuf, 0, nsz);
-    memcpy(nbuf + CheapPrepend, buf_peek(buf), buf_readable(buf));
+    memcpy(nbuf + buf->p_sz, buf_peek(buf), buf_readable(buf));
     free(buf->buf);
     buf->buf = nbuf;
     buf->sz = nsz;
@@ -171,19 +172,19 @@ static void buf_swap(struct buffer *buf, size_t nsz)
 static void buf_makeSpace(struct buffer *buf, size_t len)
 {
     size_t readable = buf_readable(buf);
-    if (buf_prependable(buf) + buf_writable(buf) - CheapPrepend < len)
+    if (buf_prependable(buf) + buf_writable(buf) - buf->p_sz < len)
     {
         size_t nsz = buf->write_idx + len;
         buf_swap(buf, nsz);
     }
     else
     {
-        assert(CheapPrepend < buf->read_idx);
-        memmove(buf->buf + CheapPrepend, buf_peek(buf), readable);
+        assert(buf->p_sz < buf->read_idx);
+        memmove(buf->buf + buf->p_sz, buf_peek(buf), readable);
     }
 
-    buf->read_idx = CheapPrepend;
-    buf->write_idx = CheapPrepend + readable;
+    buf->read_idx = buf->p_sz;
+    buf->write_idx = buf->p_sz + readable;
     assert(readable == buf_readable(buf));
 }
 
@@ -212,7 +213,7 @@ void buf_prepend(struct buffer *buf, const char *data, size_t len)
 
 void buf_shrink(struct buffer *buf, size_t reserve)
 {
-    buf_swap(buf, CheapPrepend + buf_readable(buf) + reserve);
+    buf_swap(buf, buf->p_sz + buf_readable(buf) + reserve);
 }
 
 void buf_appendInt64(struct buffer *buf, int64_t x)

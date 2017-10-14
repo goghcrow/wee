@@ -15,7 +15,7 @@
 #endif
 
 // https://stackoverflow.com/questions/5167269/clock-gettime-alternative-in-mac-os-x
-static inline void thread_gettime(struct timespec *ts)
+inline void thread_gettime(struct timespec *ts)
 {
 #ifdef __MACH__ // OS X does not have clock_gettime, use clock_get_time
     clock_serv_t cclock;
@@ -46,7 +46,7 @@ static inline void thread_gettime(struct timespec *ts)
 })
 
 // https://stackoverflow.com/questions/558469/how-do-i-get-a-thread-id-from-an-arbitrary-pthread-t
-static inline uint64_t thread_getid()
+inline uint64_t thread_getid()
 {
     pthread_t t = pthread_self();
     uint64_t tid = 0;
