@@ -32,18 +32,37 @@ public interface GenericService {
 }
 */
 
+#define DUBBO_RES_EX 0
+#define DUBBO_RES_VAL 1
+#define DUBBO_RES_NULL 2
+
+typedef enum {
+    ex = DUBBO_RES_EX,
+    val = DUBBO_RES_VAL,
+    null = DUBBO_RES_NULL,
+} dubbo_res_type;
 
 struct dubbo_req;
+
 struct dubbo_res
 {
+    bool is_evt;
+    bool ok;
+    dubbo_res_type type;
+    char *desc;
+    char *data;
+    size_t data_sz;
+    char *attach;
+    size_t attach_sz;
 };
 
-struct dubbo_req *dubbo_req_create();
-void dubbo_req_release(struct dubbo_req *);
+struct dubbo_req *dubbo_req_create(const char *service, const char *method, const char *json_args, const char *json_attach);
+void dubbo_req_release(struct dubbo_req * req);
+void dubbo_res_release(struct dubbo_res *);
 
-struct buffer* dubbo_encode(struct dubbo_req *);
-bool dubbo_decode(struct buffer *, struct dubbo_res *);
+struct buffer *dubbo_encode(const struct dubbo_req *);
+struct dubbo_res *dubbo_decode(struct buffer *);
 
-bool is_dubbo_packet(struct buffer *);
+bool is_dubbo_packet(const struct buffer *);
 
 #endif

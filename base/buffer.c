@@ -55,22 +55,22 @@ void buf_setWriteIndex(struct buffer *buf, size_t write_idx)
     buf->write_idx = write_idx;
 }
 
-size_t buf_readable(struct buffer *buf)
+size_t buf_readable(const struct buffer *buf)
 {
     return buf->write_idx - buf->read_idx;
 }
 
-size_t buf_writable(struct buffer *buf)
+size_t buf_writable(const struct buffer *buf)
 {
     return buf->sz - buf->write_idx;
 }
 
-size_t buf_prependable(struct buffer *buf)
+size_t buf_prependable(const struct buffer *buf)
 {
     return buf->read_idx;
 }
 
-const char *buf_peek(struct buffer *buf)
+const char *buf_peek(const struct buffer *buf)
 {
     return buf->buf + buf->read_idx;
 }
@@ -262,7 +262,7 @@ void buf_prependInt8(struct buffer *buf, int8_t x)
     buf_prepend(buf, (char *)&x, sizeof(int8_t));
 }
 
-int64_t buf_peekInt64(struct buffer *buf)
+int64_t buf_peekInt64(const struct buffer *buf)
 {
     assert(buf_readable(buf) >= sizeof(int64_t));
     int64_t be64 = 0;
@@ -270,7 +270,7 @@ int64_t buf_peekInt64(struct buffer *buf)
     return be64toh(be64);
 }
 
-int32_t buf_peekInt32(struct buffer *buf)
+int32_t buf_peekInt32(const struct buffer *buf)
 {
     assert(buf_readable(buf) >= sizeof(int32_t));
     int32_t be32 = 0;
@@ -278,7 +278,7 @@ int32_t buf_peekInt32(struct buffer *buf)
     return be32toh(be32);
 }
 
-int16_t buf_peekInt16(struct buffer *buf)
+int16_t buf_peekInt16(const struct buffer *buf)
 {
     assert(buf_readable(buf) >= sizeof(int16_t));
     int16_t be16 = 0;
@@ -286,7 +286,7 @@ int16_t buf_peekInt16(struct buffer *buf)
     return be16toh(be16);
 }
 
-int8_t buf_peekInt8(struct buffer *buf)
+int8_t buf_peekInt8(const struct buffer *buf)
 {
     assert(buf_readable(buf) >= sizeof(int8_t));
     return *buf_peek(buf);

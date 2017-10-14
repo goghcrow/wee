@@ -30,9 +30,42 @@
 
 #define DUBBO_SERI_MASK 0x1f
 
-#define DUBBO_RES_EX 0
-#define DUBBO_RES_VAL 1
-#define DUBBO_RES_NULL 2
+#define DUBBO_RES_T_OK 20
+#define DUBBO_RES_T_CLIENT_TIMEOUT 30
+#define DUBBO_RES_T_SERVER_TIMEOUT 31
+#define DUBBO_RES_T_BAD_REQUEST 40
+#define DUBBO_RES_T_BAD_RESPONSE 50
+#define DUBBO_RES_T_SERVICE_NOT_FOUND 60
+#define DUBBO_RES_T_SERVICE_ERROR 70
+#define DUBBO_RES_T_SERVER_ERROR 80
+#define DUBBO_RES_T_CLIENT_ERROR 90
+
+static char *get_res_status_desc(int8_t status)
+{
+    switch (status)
+    {
+    case DUBBO_RES_T_OK:
+        return "OK";
+    case DUBBO_RES_T_CLIENT_TIMEOUT:
+        return "CLIENT TIMEOUT";
+    case DUBBO_RES_T_SERVER_TIMEOUT:
+        return "SERVER TIMEOUT";
+    case DUBBO_RES_T_BAD_REQUEST:
+        return "BAD REQUEST";
+    case DUBBO_RES_T_BAD_RESPONSE:
+        return "BAD RESPONSE";
+    case DUBBO_RES_T_SERVICE_NOT_FOUND:
+        return "SERVICE NOT FOUND";
+    case DUBBO_RES_T_SERVICE_ERROR:
+        return "SERVICE ERROR";
+    case DUBBO_RES_T_SERVER_ERROR:
+        return "SERVER ERROR";
+    case DUBBO_RES_T_CLIENT_ERROR:
+        return "CLIENT ERROR";
+    default:
+        return "UNKNOWN";
+    }
+}
 
 struct dubbo_req
 {
@@ -68,7 +101,7 @@ static int64_t next_reqid()
     return id;
 }
 
-static char *rebuild_json_args(char *json_str)
+static char *rebuild_json_args(const char *json_str)
 {
     cJSON *root = cJSON_Parse(json_str);
     if (root == NULL)
@@ -103,7 +136,7 @@ static char *rebuild_json_args(char *json_str)
 //     return NULL;
 // }
 
-static bool encode_req_hdr(struct buffer *buf, struct dubbo_hdr *hdr)
+static bool encode_req_hdr(struct buffer *buf, const struct dubbo_hdr *hdr)
 {
     if (buf_prependable(buf) < DUBBO_HDR_LEN)
     {
@@ -118,6 +151,39 @@ static bool encode_req_hdr(struct buffer *buf, struct dubbo_hdr *hdr)
     return true;
 }
 
+static bool decode_res_hdr(struct buffer *buf, struct dubbo_hdr *hdr)
+{
+    if (!is_dubbo_packet(buf))
+    {
+        return false;
+    }
+
+    buf_readInt16(buf); // magic
+    hdr->flag = buf_readInt8(buf);
+    hdr->status = buf_readInt8(buf);
+    hdr->reqid = buf_readInt64(buf);
+    hdr->body_sz = buf_readInt32(buf);
+
+    int8_t seria_id = hdr->flag & DUBBO_SERI_MASK;
+    if (seria_id != DUBBO_HESSIAN2_SERI_ID)
+    {
+        fprintf(stderr, "ERROR: unsupport dubbo serialization id %d\n", seria_id);
+        return false;
+    }
+
+    if ((hdr->flag & DUBBO_FLAG_REQ) == 0)
+    {
+        // decode response
+        return true;
+    }
+    else
+    {
+        // decode request
+        fprintf(stderr, "ERROR: unsupport decode dubbo request packet\n");
+        return false;
+    }
+}
+
 #define write_hs_str(buf, s)                                             \
     {                                                                    \
         int n = hs_encode_string((s), (uint8_t *)buf_beginWrite((buf))); \
@@ -128,7 +194,7 @@ static bool encode_req_hdr(struct buffer *buf, struct dubbo_hdr *hdr)
         buf_has_written(buf, n);                                         \
     }
 
-static bool encode_req_data(struct buffer *buf, struct dubbo_req *req)
+static bool encode_req_data(struct buffer *buf, const struct dubbo_req *req)
 {
     write_hs_str(buf, DUBBO_VER);
     write_hs_str(buf, req->service);
@@ -146,7 +212,61 @@ static bool encode_req_data(struct buffer *buf, struct dubbo_req *req)
     return true;
 }
 
-static bool encode_req(struct buffer *buf, struct dubbo_req *req)
+#define read_hs_str(buf, out, out_sz)                                                        \
+    if (!hs_decode_string((uint8_t *)buf_peek((buf)), buf_readable((buf)), (out), (out_sz))) \
+    {                                                                                        \
+        fprintf(stderr, "ERROR: failed to decode hessian string\n");                         \
+        return false;                                                                        \
+    }                                                                                        \
+    buf_retrieve(buf, *(out_sz));
+
+static bool decode_res_data(struct buffer *buf, const struct dubbo_hdr *hdr, struct dubbo_res *res)
+{
+    int32_t flag = -1;
+    // decode data
+    if (hs_decode_int((uint8_t *)buf_peek(buf), buf_readable(buf), &flag))
+    {
+        fprintf(stderr, "ERROR: failed to decode hessian int\n");
+        return false;
+    }
+
+    switch (flag)
+    {
+    case DUBBO_RES_NULL:
+        break;
+    case DUBBO_RES_EX:
+        read_hs_str(buf, &res->data, &res->data_sz);
+        break;
+    case DUBBO_RES_VAL:
+        read_hs_str(buf, &res->data, &res->data_sz);
+        break;
+    default:
+        fprintf(stderr, "ERROR: Unknown result flag, expect '0' '1' '2', get %d\n", res->type);
+        return false;
+    }
+
+    res->type = flag;
+    return true;
+}
+
+void dubbo_res_release(struct dubbo_res *res)
+{
+    if (res->desc)
+    {
+        free(res->desc);
+    }
+    if (res->data)
+    {
+        free(res->data);
+    }
+    if (res->attach)
+    {
+        free(res->attach);
+    }
+    free(res);
+}
+
+static bool encode_req(struct buffer *buf, const struct dubbo_req *req)
 {
     struct dubbo_hdr hdr;
     memset(&hdr, 0, sizeof(hdr));
@@ -171,7 +291,7 @@ static bool encode_req(struct buffer *buf, struct dubbo_req *req)
     {
         if (!encode_req_data(buf, req))
         {
-            fprintf(stderr, "ERROR: fail to encode req data\n");
+            fprintf(stderr, "ERROR: failed to encode req data\n");
             return false;
         }
     }
@@ -179,14 +299,46 @@ static bool encode_req(struct buffer *buf, struct dubbo_req *req)
 
     if (!encode_req_hdr(buf, &hdr))
     {
-        fprintf(stderr, "ERROR: fail to encode req hdr\n");
+        fprintf(stderr, "ERROR: failed to encode req hdr\n");
         return false;
     }
 
     return true;
 }
 
-struct dubbo_req *dubbo_req_create(char *service, char *method, char *json_args, char *json_attach)
+static bool decode_res(struct buffer *buf, const struct dubbo_hdr *hdr, struct dubbo_res *res)
+{
+    res->is_evt = hdr->flag & DUBBO_FLAG_EVT;
+    res->desc = strdup(get_res_status_desc(hdr->status));
+
+    if (hdr->status == DUBBO_RES_T_OK)
+    {
+        res->ok = true;
+        if (res->is_evt)
+        {
+            // decode evt
+        }
+        else
+        {
+            if (!decode_res_data(buf, hdr, res))
+            {
+                fprintf(stderr, "ERROR: failed to decode response data\n");
+                return false;
+            }
+        }
+    }
+    else
+    {
+        res->ok = false;
+        read_hs_str(buf, &res->data, &res->data_sz);
+    }
+
+    // fixme read attach
+
+    return true;
+}
+
+struct dubbo_req *dubbo_req_create(const char *service, const char *method, const char *json_args, const char *json_attach)
 {
     struct dubbo_req *req = calloc(1, sizeof(*req));
     assert(req);
@@ -210,7 +362,10 @@ struct dubbo_req *dubbo_req_create(char *service, char *method, char *json_args,
     req->argv[DUBBO_GENERIC_METHOD_ARGV_ARGS_IDX] = args;
 
     // fixme 要处理成 hessian map
-    req->attach = json_attach;
+    if (json_attach)
+    {
+        req->attach = strdup(json_attach);
+    }
 
     return req;
 }
@@ -221,27 +376,53 @@ void dubbo_req_release(struct dubbo_req *req)
     free(req->argv[DUBBO_GENERIC_METHOD_ARGV_TYPES_IDX]);
     free(req->argv[DUBBO_GENERIC_METHOD_ARGV_ARGS_IDX]);
     free(req->argv);
+    if (req->attach)
+    {
+        free(req->attach);
+    }
     free(req);
 }
 
-struct buffer *dubbo_encode(struct dubbo_req *req)
+struct buffer *dubbo_encode(const struct dubbo_req *req)
 {
     struct buffer *buf = buf_create_ex(DUBBO_BUF_LEN, DUBBO_HDR_LEN);
 
-    if (encode_req(buf, req)) {
+    if (encode_req(buf, req))
+    {
         return buf;
-    } else {
+    }
+    else
+    {
         buf_release(buf);
         return NULL;
     }
 }
 
-bool dubbo_decode(struct buffer *buf, struct dubbo_res *res)
+struct dubbo_res *dubbo_decode(struct buffer *buf)
 {
-    return false;
+    struct dubbo_hdr hdr;
+    memset(&hdr, 0, sizeof(hdr));
+
+    if (!decode_res_hdr(buf, &hdr))
+    {
+        fprintf(stderr, "ERROR: failed to decode dubbo response");
+        return NULL;
+    }
+
+    struct dubbo_res *res = calloc(1, sizeof(*res));
+    assert(res);
+    res->type = -1;
+
+    if (!(decode_res(buf, &hdr, res)))
+    {
+        free(res);
+        return NULL;
+    }
+
+    return res;
 }
 
-bool is_dubbo_packet(struct buffer *buf)
+bool is_dubbo_packet(const struct buffer *buf)
 {
-    return false;
+    return buf_readable(buf) >= DUBBO_HDR_LEN && (uint16_t)buf_peekInt16(buf) == DUBBO_MAGIC;
 }
