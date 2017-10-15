@@ -211,8 +211,8 @@ static bool encode_req_data(struct buffer *buf, const struct dubbo_req *req)
 {
     write_hs_str(buf, DUBBO_VER);
     write_hs_str(buf, req->service);
-    write_hs_str(buf, DUBBO_GENERIC_METHOD_NAME);
     write_hs_str(buf, DUBBO_GENERIC_METHOD_VER);
+    write_hs_str(buf, DUBBO_GENERIC_METHOD_NAME);
     write_hs_str(buf, DUBBO_GENERIC_METHOD_PARA_TYPES);
 
     // args

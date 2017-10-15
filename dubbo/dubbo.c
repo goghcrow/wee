@@ -183,18 +183,18 @@ static bool dubbo_invoke(struct dubbo_args *args)
         {
             if (res->ok)
             {
-                printf("\x1B[1;31m%s\x1B[0m\n", cJSON_Print(resp));
+                printf("\x1B[1;32m%s\x1B[0m\n", cJSON_Print(resp));
             }
             else
             {
                 puts(res->desc);
-                printf("\x1B[1;32m%s\x1B[0m\n", cJSON_Print(resp));
+                printf("\x1B[1;31m%s\x1B[0m\n", cJSON_Print(resp));
             }
             cJSON_Delete(resp);
         }
         else
         {
-            printf("\x1B[1;32mInvalid Json Response %s\x1B[0m\n", res->data);
+            printf("\x1B[1;31m%s\x1B[0m\n", res->data);
         }
         free(json);
     }
@@ -242,7 +242,7 @@ int main(int argc, char **argv)
             char *c = strrchr(optarg, '.');
             ASSERT_OPT(c, "Invalid method %s", optarg);
             *c = 0;
-            args.service = c;
+            args.service = optarg;
             args.method = c + 1;
         }
         break;
