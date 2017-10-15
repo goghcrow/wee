@@ -6,7 +6,7 @@
 #include "hessian.h"
 #include "../base/endian.h"
 
-// 复制 size 个 utf8 字符, 返回实际复制字节数
+// 复制 size 个 utf8 字符, 返回实际复制字节数, 遇到非法 utf8 字符返回 -1
 static int utf8cpy(uint8_t *dst, const uint8_t *src, size_t sz)
 {
     int i = 0;
