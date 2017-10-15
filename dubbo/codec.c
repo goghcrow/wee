@@ -230,7 +230,7 @@ static bool encode_req_data(struct buffer *buf, const struct dubbo_req *req)
 
     // args
     write_hs_str(buf, req->argv[DUBBO_GENERIC_METHOD_ARGV_METHOD_IDX]);
-    write_hs_str(buf, req->argv[DUBBO_GENERIC_METHOD_ARGV_TYPES_IDX]);
+    buf_has_written(buf, hs_encode_null((uint8_t *)buf_beginWrite(buf))); // 方法类型提示 NULL, 不支持重载方法
     write_hs_str(buf, req->argv[DUBBO_GENERIC_METHOD_ARGV_ARGS_IDX]);
 
     // fixme :  attach NULL
@@ -384,8 +384,8 @@ struct dubbo_req *dubbo_req_create(const char *service, const char *method, cons
     req->argc = DUBBO_GENERIC_METHOD_ARGC;
     req->argv = calloc(3, sizeof(void *));
     assert(req->argv);
-    req->argv[DUBBO_GENERIC_METHOD_ARGV_METHOD_IDX] = strdup(service);
-    req->argv[DUBBO_GENERIC_METHOD_ARGV_TYPES_IDX] = strdup(method);
+    req->argv[DUBBO_GENERIC_METHOD_ARGV_METHOD_IDX] = strdup(method);
+    req->argv[DUBBO_GENERIC_METHOD_ARGV_TYPES_IDX] = NULL;
     req->argv[DUBBO_GENERIC_METHOD_ARGV_ARGS_IDX] = args;
 
     // fixme 要处理成 hessian map
@@ -400,7 +400,7 @@ struct dubbo_req *dubbo_req_create(const char *service, const char *method, cons
 void dubbo_req_release(struct dubbo_req *req)
 {
     free(req->argv[DUBBO_GENERIC_METHOD_ARGV_METHOD_IDX]);
-    free(req->argv[DUBBO_GENERIC_METHOD_ARGV_TYPES_IDX]);
+    // free(req->argv[DUBBO_GENERIC_METHOD_ARGV_TYPES_IDX]);
     free(req->argv[DUBBO_GENERIC_METHOD_ARGV_ARGS_IDX]);
     free(req->argv);
     if (req->attach)
