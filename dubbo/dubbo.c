@@ -175,7 +175,7 @@ static bool dubbo_invoke(struct dubbo_args *args)
 
     if (res->data_sz)
     {
-        if (res->data[0] == "[" || res->data[0] == "{")
+        if (res->data[0] == '[' || res->data[0] == '{')
         {
             // char* json = malloc(res->data_sz + 1);
             // memcpy(json, res->data, res->data_sz);
