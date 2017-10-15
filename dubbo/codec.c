@@ -83,7 +83,7 @@ struct dubbo_hdr
 };
 
 #define ERROR(fmt, ...) \
-    fprintf(stderr, "\x1B[1;31mERROR: " fmt "\x1B[0m in %s:%s:%d\n", ##__VA_ARGS__, __func__, __FILE__, __LINE__);
+    fprintf(stderr, "\x1B[1;31mERROR: " fmt "\x1B[0m in function %s %s:%d\n", ##__VA_ARGS__, __func__, __FILE__, __LINE__);
 
 static char *get_res_status_desc(int8_t status)
 {
@@ -249,13 +249,13 @@ static bool encode_req_data(struct buffer *buf, const struct dubbo_req *req)
 
 static bool decode_res_data(struct buffer *buf, const struct dubbo_hdr *hdr, struct dubbo_res *res)
 {
-    int32_t flag = -1;
-    // decode data
-    if (hs_decode_int((uint8_t *)buf_peek(buf), buf_readable(buf), &flag))
-    {
-        ERROR("failed to decode hessian int");
-        return false;
+    int8_t flag = buf_peekInt8(buf);
+    // hessian2 小整数
+    if (flag < 0x80 || flag > 0xbf) {
+        ERROR("invalid response type %d (raw)", flag);
+        return;
     }
+    flag -= 0x90;
 
     switch (flag)
     {
