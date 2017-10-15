@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <sys/uio.h>
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <string.h>
 #include <assert.h>
 #include "endian.h"

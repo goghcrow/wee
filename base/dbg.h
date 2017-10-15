@@ -18,4 +18,6 @@ void bin2hex(const char *bin, size_t sz);
 #define DUMP_MEM(vp, n) bin2hex((const char *)(vp), (size_t)(n))
 
 
+#define UNUSED(x) ((void)(x))
+
 #endif

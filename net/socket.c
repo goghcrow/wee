@@ -1,7 +1,9 @@
 #ifndef SOCKET_H
 #define SOCKET_H
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include <stdint.h>
 #include <stdbool.h>

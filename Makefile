@@ -59,7 +59,7 @@ hs_test: dubbo/hessian.c dubbo/hessian_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
 dubbo_test: base/cJSON.c base/buffer.c base/dbg.c net/socket.c dubbo/hessian.c dubbo/codec.c dubbo/dubbo.c
-	$(CC) -std=gnu99 -g -Wall -o $@ $^
+	$(CC) -D_GNU_SOURCE -std=gnu99 -g -Wall -o $@ $^
 
 clean:
 	-/bin/rm -f a.out
