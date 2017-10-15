@@ -175,31 +175,39 @@ static bool dubbo_invoke(struct dubbo_args *args)
 
     if (res->data_sz)
     {
-        char* json = malloc(res->data_sz + 1);
-        memcpy(json, res->data, res->data_sz);
-        json[res->data_sz] = '\0';
-        cJSON *resp = cJSON_Parse(json);
-        if (resp)
+        if (res->data[0] == "[" || res->data[0] == "{")
         {
-            if (res->ok)
+            // char* json = malloc(res->data_sz + 1);
+            // memcpy(json, res->data, res->data_sz);
+            // json[res->data_sz] = '\0';
+            // cJSON *resp = cJSON_Parse(json);
+            cJSON *resp = cJSON_Parse(res->data);
+            if (resp)
             {
-                printf("\x1B[1;32m%s\x1B[0m\n", cJSON_Print(resp));
+                if (res->ok)
+                {
+                    printf("\x1B[1;32m%s\x1B[0m\n", cJSON_Print(resp));
+                }
+                else
+                {
+                    puts(res->desc);
+                    printf("\x1B[1;31m%s\x1B[0m\n", cJSON_Print(resp));
+                }
+                cJSON_Delete(resp);
             }
             else
             {
-                puts(res->desc);
-                printf("\x1B[1;31m%s\x1B[0m\n", cJSON_Print(resp));
+                printf("\x1B[1;31m%s\x1B[0m\n", res->data);
             }
-            cJSON_Delete(resp);
+            // free(json);
         }
         else
         {
-            printf("\x1B[1;31m%s\x1B[0m\n", res->data);
+            printf("\x1B[1;32m%s\x1B[0m\n", res->data);
         }
-        free(json);
     }
 
-    // fimxe print attach
+// fimxe print attach
 
 release:
     dubbo_req_release(req);
