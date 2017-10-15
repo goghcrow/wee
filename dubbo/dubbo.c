@@ -37,18 +37,17 @@ struct dubbo_args
         usage();                                                         \
     }
 
+// fixme support attach
+// telnel 10.9.191.10 20881    ls  / invoke
+// ./dubbo_test -h 10.9.191.10 -p 20881 -mcom.youzan.trade.core.biz.HelloService.hello -a "{}"
+// ./dubbo_test -h 10.9.191.10 -p 20881 -mcom.youzan.trade.core.service.main.pay.TradePayService.pay -a "{}"
 static void usage()
 {
     static const char *usage =
         "\nUsage:\n"
-        "   dubbo -h<HOST> -p<PORT> -m<METHOD> -a<JSON_ARGUMENTS> [-e<JSON_ATTACHMENT='{}'> -t<TIMEOUT_SEC=5>]\n"
-        "   dubbo -h<HOST> -p<PORT> -s [-t<TIMEOUT_SEC=5>] doc: https://github.com/youzan/zan/issues/18 \n\n"
+        "   dubbo -h<HOST> -p<PORT> -m<METHOD> -a<JSON_ARGUMENTS> [-e<JSON_ATTACHMENT='{}'> -t<TIMEOUT_SEC=5>]\n\n"
         "Example:\n"
-        "   dubbo -h127.0.0.1 -p8050 -s\n"
-        "   dubbo -h127.0.0.1 -p8050 -m=com.youzan.material.general.service.TokenService.getToken -a='{\"xxxId\":1,\"scope\":\"\"}'\n"
-        "   dubbo -h127.0.0.1 -p8050 -m=com.youzan.material.general.service.TokenService.getToken -a='{\"xxxId\":1,\"scope\":\"\"}' -e='{\"xxxId\":1}'\n"
-        "   dubbo -h127.0.0.1 -p8050 -m=com.youzan.material.general.service.MediaService.getMediaList -a='{\"query\":{\"categoryId\":2,\"xxxId\":1,\"pageNo\":1,\"pageSize\":5}}'\n"
-        "   dubbo -hqabb-dev-scrm-test0 -p8100 -mcom.youzan.scrm.customer.service.customerService.getByYzUid -a '{\"xxxId\":1, \"yzUid\": 1}'\n";
+        "   dubbo -h127.0.0.1 -p20881 -mcom.youzan.trade.core.biz.HelloService.hello -a \"{}\"\n";
     puts(usage);
     exit(1);
 }
