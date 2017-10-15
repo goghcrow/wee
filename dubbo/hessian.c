@@ -6,7 +6,8 @@
 #include "hessian.h"
 #include "../base/endian.h"
 
-static bool utf8cpy(uint8_t *dst, const uint8_t *src, size_t sz)
+// 复制 size 个 utf8 字符, 返回实际复制字节数
+static int utf8cpy(uint8_t *dst, const uint8_t *src, size_t sz)
 {
     int i = 0;
     uint8_t c;
@@ -30,17 +31,19 @@ static bool utf8cpy(uint8_t *dst, const uint8_t *src, size_t sz)
         {
             i += 4;
         }
-        //else if (($c & 0xFC) == 0xF8) i+=5; // 111110bb //byte 5, unnecessary in 4 byte UTF-8
-        //else if (($c & 0xFE) == 0xFC) i+=6; // 1111110b //byte 6, unnecessary in 4 byte UTF-8
         else
         {
             // invalid utf8
-            return false;
+            return -1;
         }
     }
 
-    memcpy(dst, src, i);
-    return true;
+    if (i)
+    {
+        memcpy(dst, src, i);
+    }
+
+    return i;
 }
 
 // http://hessian.caucho.com/doc/hessian-serialization.html
@@ -111,6 +114,7 @@ bool hs_decode_int(const uint8_t *buf, size_t sz, int32_t *out)
     return r;
 }
 
+// !!!!! 注意: 这里读出来的长度是指 UTF8 字符长度, 而非字节长度
 static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_t *out_str, size_t *out_length, short *is_last_chunk)
 {
     uint8_t code = buf[0];
@@ -158,7 +162,10 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
         {
             return false;
         }
-        memcpy(out_str + *out_length, buf + 1, delta_length);
+        if (utf8cpy(out_str + *out_length, buf + 1, delta_length) == -1)
+        {
+            return false;
+        }
         *out_length = *out_length + delta_length;
         return true;
 
@@ -176,8 +183,10 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
         {
             return false;
         }
-
-        utf8cpy(out_str + *out_length, buf + 2, delta_length);
+        if (utf8cpy(out_str + *out_length, buf + 2, delta_length) == -1)
+        {
+            return false;
+        }
         *out_length = *out_length + delta_length;
         return true;
 
@@ -192,7 +201,10 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
         {
             return false;
         }
-        memcpy(out_str + *out_length, buf + 3, delta_length);
+        if (utf8cpy(out_str + *out_length, buf + 3, delta_length) == -1)
+        {
+            return false;
+        }
         *out_length = *out_length + delta_length;
         return true;
 
@@ -207,7 +219,10 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
         {
             return false;
         }
-        memcpy(out_str + *out_length, buf + 3, delta_length);
+        if (utf8cpy(out_str + *out_length, buf + 3, delta_length) == -1)
+        {
+            return false;
+        }
         *out_length = *out_length + delta_length;
         while (!*is_last_chunk)
         {
@@ -222,7 +237,6 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
     return false;
 }
 
-// FIXME UTF8
 int hs_encode_string(const char *str, uint8_t *out)
 {
     size_t index = 0;
