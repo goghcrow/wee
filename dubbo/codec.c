@@ -249,13 +249,14 @@ static bool encode_req_data(struct buffer *buf, const struct dubbo_req *req)
 
 static bool decode_res_data(struct buffer *buf, const struct dubbo_hdr *hdr, struct dubbo_res *res)
 {
-    uint8_t flag = buf_peekInt8(buf);
+    uint8_t flag = buf_readInt8(buf);
     // hessian2 小整数
     if (flag < 0x80 || flag > 0xbf) {
         ERROR("invalid response type %d (raw)", flag);
         return false;
     }
     flag -= 0x90;
+
 
     switch (flag)
     {
