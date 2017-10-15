@@ -6,6 +6,43 @@
 #include "hessian.h"
 #include "../base/endian.h"
 
+static bool utf8cpy(uint8_t *dst, const uint8_t *src, size_t sz)
+{
+    int i = 0;
+    uint8_t c;
+
+    while (sz--)
+    {
+        c = src[i];
+        if (c <= 0x80)
+        {
+            i += 1;
+        }
+        else if ((c & 0xE0) == 0xC0)
+        {
+            i += 2;
+        }
+        else if ((c & 0xF0) == 0xE0)
+        {
+            i += 3;
+        }
+        else if ((c & 0xF8) == 0xF0)
+        {
+            i += 4;
+        }
+        //else if (($c & 0xFC) == 0xF8) i+=5; // 111110bb //byte 5, unnecessary in 4 byte UTF-8
+        //else if (($c & 0xFE) == 0xFC) i+=6; // 1111110b //byte 6, unnecessary in 4 byte UTF-8
+        else
+        {
+            // invalid utf8
+            return false;
+        }
+    }
+
+    memcpy(dst, src, i);
+    return true;
+}
+
 // http://hessian.caucho.com/doc/hessian-serialization.html
 
 int hs_encode_null(uint8_t *out)
@@ -139,7 +176,8 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
         {
             return false;
         }
-        memcpy(out_str + *out_length, buf + 2, delta_length);
+
+        utf8cpy(out_str + *out_length, buf + 2, delta_length);
         *out_length = *out_length + delta_length;
         return true;
 

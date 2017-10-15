@@ -256,8 +256,7 @@ static bool decode_res_data(struct buffer *buf, const struct dubbo_hdr *hdr, str
         return false;
     }
     flag -= 0x90;
-
-
+    
     switch (flag)
     {
     case DUBBO_RES_NULL:

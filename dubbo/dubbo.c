@@ -177,10 +177,7 @@ static bool dubbo_invoke(struct dubbo_args *args)
     {
         if (res->data[0] == '[' || res->data[0] == '{')
         {
-            // char* json = malloc(res->data_sz + 1);
-            // memcpy(json, res->data, res->data_sz);
-            // json[res->data_sz] = '\0';
-            // cJSON *resp = cJSON_Parse(json);
+            // 不需要 null 截止字符串
             cJSON *resp = cJSON_Parse(res->data);
             if (resp)
             {
@@ -199,7 +196,6 @@ static bool dubbo_invoke(struct dubbo_args *args)
             {
                 printf("\x1B[1;31m%s\x1B[0m\n", res->data);
             }
-            // free(json);
         }
         else
         {
