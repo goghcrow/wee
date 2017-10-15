@@ -63,6 +63,9 @@ void dubbo_res_release(struct dubbo_res *);
 struct buffer *dubbo_encode(const struct dubbo_req *);
 struct dubbo_res *dubbo_decode(struct buffer *);
 
-bool is_dubbo_packet(const struct buffer *);
+bool is_dubbo_pkt(const struct buffer *);
+
+// remaining   0: completed,  < 0, not completed, > 0 overflow
+bool is_completed_dubbo_pkt(const struct buffer *buf, int *remaining);
 
 #endif
