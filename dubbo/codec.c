@@ -18,9 +18,22 @@
 #define DUBBO_MAGIC 0xdabb
 #define DUBBO_VER "2.0.0"
 
+/*
+public interface GenericService {
+    **
+     * 泛化调用，方法参数和返回结果使用json序列化，方法参数的key从arg0开始
+     * @param method
+     * @param parameterTypes
+     * @param jsonArgs
+     * @return
+     * @throws GenericException
+     *
+    String $invokeWithJsonArgs(String method, String[] parameterTypes, String jsonArgs) throws GenericException;
+}
+*/
 #define DUBBO_GENERIC_METHOD_NAME "$invokeWithJsonArgs"
 #define DUBBO_GENERIC_METHOD_VER "0.0.0"
-#define DUBBO_GENERIC_METHOD_PARA_TYPES ""
+#define DUBBO_GENERIC_METHOD_PARA_TYPES "Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;"
 #define DUBBO_GENERIC_METHOD_ARGC 3
 #define DUBBO_GENERIC_METHOD_ARGV_METHOD_IDX 0
 #define DUBBO_GENERIC_METHOD_ARGV_TYPES_IDX 1
