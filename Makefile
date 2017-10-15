@@ -63,7 +63,6 @@ dubbo_test: base/cJSON.c base/buffer.c base/dbg.c net/socket.c dubbo/hessian.c d
 
 clean:
 	-/bin/rm -f a.out
-	-/bin/rm -f test
 	-/bin/rm -f novadump
 	-/bin/rm -f table_test
 	-/bin/rm -f sniff_test
