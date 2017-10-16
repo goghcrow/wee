@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdbool.h>
+#include <assert.h>
 #include <string.h>
 #include <stdlib.h> // atoi
 #include <stdarg.h>
@@ -176,8 +177,13 @@ static bool dubbo_invoke(struct dubbo_args *args)
     {
         if (res->data[0] == '[' || res->data[0] == '{')
         {
-            // 不需要 null 截止字符串
-            cJSON *resp = cJSON_Parse(res->data);
+            // 返回 json, 不应该有 NULL 存在, 且非 NULL 结尾
+            char * json = malloc(res->data_sz + 1);
+            assert(json);
+            memcpy(json, res->data, res->data_sz);
+            json[res->data_sz] = '\0';
+
+            cJSON *resp = cJSON_Parse(json);
             if (resp)
             {
                 if (res->ok)
@@ -195,6 +201,7 @@ static bool dubbo_invoke(struct dubbo_args *args)
             {
                 printf("\x1B[1;31m%s\x1B[0m\n", res->data);
             }
+            free(json);
         }
         else
         {

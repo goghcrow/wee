@@ -185,7 +185,8 @@ static bool decode_res_hdr(struct buffer *buf, struct dubbo_hdr *hdr)
     hdr->reqid = buf_readInt64(buf);
     hdr->body_sz = buf_readInt32(buf);
 
-    if (hdr->body_sz > DUBBO_MAX_PKT_SZ) {
+    if (hdr->body_sz > DUBBO_MAX_PKT_SZ)
+    {
         ERROR("too big dubbo pkt body size: %d", hdr->body_sz);
         return false;
     }
@@ -242,7 +243,7 @@ static bool encode_req_data(struct buffer *buf, const struct dubbo_req *req)
 #define read_hs_str(buf, out, out_sz)                                                        \
     if (!hs_decode_string((uint8_t *)buf_peek((buf)), buf_readable((buf)), (out), (out_sz))) \
     {                                                                                        \
-        ERROR("failed to decode hessian string");                                          \
+        ERROR("failed to decode hessian string");                                            \
         return false;                                                                        \
     }                                                                                        \
     buf_retrieve(buf, *(out_sz));
@@ -251,12 +252,13 @@ static bool decode_res_data(struct buffer *buf, const struct dubbo_hdr *hdr, str
 {
     uint8_t flag = buf_readInt8(buf);
     // hessian2 小整数
-    if (flag < 0x80 || flag > 0xbf) {
+    if (flag < 0x80 || flag > 0xbf)
+    {
         ERROR("invalid response type %d (raw)", flag);
         return false;
     }
     flag -= 0x90;
-    
+
     switch (flag)
     {
     case DUBBO_RES_NULL:
