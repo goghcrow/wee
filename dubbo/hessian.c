@@ -115,6 +115,7 @@ bool hs_decode_int(const uint8_t *buf, size_t sz, int32_t *out)
 }
 
 // !!!!! 注意: 这里读出来的长度是指 UTF8 字符长度, 而非字节长度
+// out_length 修改为返回 字节数, 而非字符数
 static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_t *out_str, size_t *out_length, short *is_last_chunk)
 {
     uint8_t code = buf[0];
