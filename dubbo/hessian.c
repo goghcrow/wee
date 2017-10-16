@@ -120,6 +120,7 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
     uint8_t code = buf[0];
     size_t delta_length;
     short result;
+    int sz;
 
     switch (code)
     {
@@ -162,11 +163,12 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
         {
             return false;
         }
-        if (utf8cpy(out_str + *out_length, buf + 1, delta_length) == -1)
+        sz = utf8cpy(out_str + *out_length, buf + 1, delta_length);
+        if (sz == -1)
         {
             return false;
         }
-        *out_length = *out_length + delta_length;
+        *out_length = *out_length + sz;
         return true;
 
     case 0x30:
@@ -183,11 +185,12 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
         {
             return false;
         }
-        if (utf8cpy(out_str + *out_length, buf + 2, delta_length) == -1)
+        sz = utf8cpy(out_str + *out_length, buf + 2, delta_length);
+        if (sz == -1)
         {
             return false;
         }
-        *out_length = *out_length + delta_length;
+        *out_length = *out_length + sz;
         return true;
 
     case 0x53:
@@ -201,11 +204,12 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
         {
             return false;
         }
-        if (utf8cpy(out_str + *out_length, buf + 3, delta_length) == -1)
+        sz = utf8cpy(out_str + *out_length, buf + 3, delta_length);
+        if (sz == -1)
         {
             return false;
         }
-        *out_length = *out_length + delta_length;
+        *out_length = *out_length + sz;
         return true;
 
     case 0x52:
@@ -219,11 +223,12 @@ static bool internal_decode_string(const uint8_t *buf, size_t buf_length, uint8_
         {
             return false;
         }
-        if (utf8cpy(out_str + *out_length, buf + 3, delta_length) == -1)
+        sz = utf8cpy(out_str + *out_length, buf + 3, delta_length);
+        if (sz == -1)
         {
             return false;
         }
-        *out_length = *out_length + delta_length;
+        *out_length = *out_length + sz;
         while (!*is_last_chunk)
         {
             result = internal_decode_string(buf, buf_length, out_str, out_length, is_last_chunk);
