@@ -58,8 +58,11 @@ chan_test: base/mtxlock.c base/cond.c base/mq.c base/chan.c base/chan_test.c
 hs_test: dubbo/hessian.c dubbo/hessian_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-dubbo_test: base/cJSON.c base/buffer.c base/dbg.c net/socket.c dubbo/hessian.c dubbo/codec.c dubbo/dubbo.c
+dubbo_test: base/cJSON.c base/buffer.c base/dbg.c net/socket.c dubbo/dubbo_hessian.c dubbo/dubbo_codec.c dubbo/dubbo.c
 	$(CC) -D_GNU_SOURCE -std=gnu99 -g -Wall -o $@ $^
+	
+ae_test: ae/anet.c ae/ae.c ae/ae_test.c
+	$(CC) -std=c99 -g -Wall -o $@ $^
 
 clean:
 	-/bin/rm -f a.out
@@ -83,4 +86,5 @@ clean:
 	-/bin/rm -f chan_test
 	-/bin/rm -f hs_test
 	-/bin/rm -f dubbo_test
+	-/bin/rm -f ae_test
 	-/bin/rm -rf *.dSYM

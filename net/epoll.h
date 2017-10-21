@@ -9,6 +9,7 @@
 
 int poller_create()
 {
+    /* 1024 is just a hint for the kernel */
     int efd = epoll_create(1024);
     if (efd == -1)
     {

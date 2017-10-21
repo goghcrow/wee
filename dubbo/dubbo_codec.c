@@ -4,13 +4,14 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "codec.h"
-#include "hessian.h"
+
 #include "../base/endian.h"
 #include "../base/buffer.h"
 #include "../base/cJSON.h"
-
 #include "../base/dbg.h"
+
+#include "dubbo_codec.h"
+#include "dubbo_hessian.h"
 
 #define DUBBO_BUF_LEN 8192
 #define DUBBO_MAX_PKT_SZ (1024 * 1024 * 4)

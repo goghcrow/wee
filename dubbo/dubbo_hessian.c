@@ -3,7 +3,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
-#include "hessian.h"
+
+#include "dubbo_hessian.h"
 #include "../base/endian.h"
 
 // 复制 size 个 utf8 字符, 返回实际复制字节数, 遇到非法 utf8 字符返回 -1
