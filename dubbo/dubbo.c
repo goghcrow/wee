@@ -1,11 +1,11 @@
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h> // atoi
+#include <stdlib.h> /*atoi*/
 #include <stdarg.h>
 #include <unistd.h>
 #include <stddef.h>
 #include <sys/time.h>
-#include <ctype.h>
+#include <ctype.h> /*isspace*/
 #include <inttypes.h>
 
 #include "dubbo_client.h"

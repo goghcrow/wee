@@ -2,6 +2,7 @@
 #define DUBBO_CLIENT_H
 
 #include <stdbool.h>
+#include <sys/time.h>
 
 struct dubbo_args
 {
@@ -14,7 +15,13 @@ struct dubbo_args
     struct timeval timeout;
 };
 
+struct dubbo_client
+{
+    // struct buf;
+    // callback ...
+};
+
 bool dubbo_invoke(struct dubbo_args *);
-bool dubbo_invoke_async(struct dubbo_args *);
+// bool dubbo_invoke_async(struct dubbo_args *);
 
 #endif
