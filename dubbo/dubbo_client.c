@@ -123,7 +123,8 @@ bool cli_connect(struct dubbo_client *cli)
     {
         if (errno == EINPROGRESS)
         {
-            if (AE_ERR == aeCreateFileEvent(cli->el, fd, AE_READABLE, cli_on_connect, cli))
+            // 这里 貌似应该 read + write
+            if (AE_ERR == aeCreateFileEvent(cli->el, fd, AE_WRITABLE, cli_on_connect, cli))
             {
                 goto close;
             }
@@ -259,7 +260,7 @@ static void cli_on_connect(struct aeEventLoop *el, int fd, void *ud, int mask)
     // 注意: ae 将 err 与 hup 转换成 write 事件
     if ((mask & AE_WRITABLE)/* && !(mask & AE_READABLE)*/)
     {
-        aeDeleteFileEvent(el, fd, AE_WRITABLE | AE_READABLE);
+        aeDeleteFileEvent(el, fd, AE_WRITABLE/* | AE_READABLE*/ );
         // 所以, 可能出错 !!!
         cli_connected(cli);
     }
