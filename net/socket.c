@@ -314,7 +314,7 @@ static int socket_ctor(const char *host, const char *port, bool nonblock)
         return -1;
     }
 
-    int sockfd;
+    int sockfd = -1;
 
     // 绑定到第一个能用的
     for (p = servinfo; p != NULL; p = p->ai_next)
