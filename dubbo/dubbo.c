@@ -11,16 +11,10 @@
 #include "dubbo_client.h"
 #include "../base/cJSON.h"
 #include "../base/dbg.h"
+#include "../ae/ae.h"
 
 extern char *optarg;
 static const char *optString = "h:p:m:a:e:t:c:n:?";
-
-struct dubbo_bench
-{
-    int concurrency;
-    int reqs;
-    int req_counter;
-};
 
 #define ASSERT_OPT(assert, reason, ...)                                  \
     if (!(assert))                                                       \
@@ -81,11 +75,10 @@ int main(int argc, char **argv)
     // fix catch siginit signal -> shutdown
     atexit(shutdown);
 
-    struct dubbo_bench bench;
-    memset(&bench, 0, sizeof(bench));
-
-    bench.concurrency = 1;
-    bench.reqs = 1;
+    struct dubbo_async_args async_args;
+    memset(&async_args, 0, sizeof(async_args));
+    async_args.req_n = 0;
+    async_args.pipe_n = 0;
 
     struct dubbo_args args;
     memset(&args, 0, sizeof(args));
@@ -125,10 +118,10 @@ int main(int argc, char **argv)
             args.timeout.tv_sec = atoi(optarg);
             break;
         case 'c':
-            bench.concurrency = atoi(optarg);
+            async_args.pipe_n = atoi(optarg);
             break;
         case 'n':
-            bench.reqs = atoi(optarg);
+            async_args.req_n = atoi(optarg);
             break;
         case '?':
             usage();
@@ -147,9 +140,6 @@ int main(int argc, char **argv)
     ASSERT_OPT(args.args, "Missing Arguments -a'${jsonargs}'");
     ASSERT_OPT(args.timeout.tv_sec > 0, "Timeout must be positive");
 
-    ASSERT_OPT(bench.concurrency > 0, "Concurrency must be positive");
-    ASSERT_OPT(bench.reqs > 0, "Requests must be positive");
-
     cJSON *json_args = cJSON_Parse(args.args);
     ASSERT_OPT(json_args && cJSON_IsObject(json_args), "Invalid Arguments JSON Format : %s", args.args);
     cJSON_Delete(json_args);
@@ -160,10 +150,23 @@ int main(int argc, char **argv)
 
     fprintf(stderr, "Invoking dubbo://%s:%s/%s.%s?args=%s&attach=%s\n", args.host, args.port, args.service, args.method, args.args, args.attach);
 
-    if (bench.reqs == 1)
+    if (async_args.req_n > 0 && async_args.pipe_n > 0)
+    {
+        async_args.el = aeCreateEventLoop(1024);
+        if (dubbo_bench_async(&args, &async_args))
+        {
+            aeMain(async_args.el);
+            aeDeleteEventLoop(async_args.el);
+            return 0;
+        }
+        else
+        {
+            aeDeleteEventLoop(async_args.el);
+            return 1;
+        }
+    }
+    else
     {
         return dubbo_invoke_sync(&args) ? 0 : 1;
     }
-
-    return dubbo_invoke_sync(&args) ? 0 : 1;
 }

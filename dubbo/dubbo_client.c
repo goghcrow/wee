@@ -28,12 +28,6 @@ static void cli_on_recv(struct aeEventLoop *el, int fd, void *ud, int mask);
 static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask);
 static void cli_decode_resp_frombuf(struct buffer *buf);
 
-struct buffer_node
-{
-    struct buffer *buf;
-    struct buffer *nxt;
-};
-
 struct dubbo_client
 {
     struct aeEventLoop *el;
@@ -43,9 +37,14 @@ struct dubbo_client
     struct buffer *snd_buf;
     int pipe_n;
     int pipe_left;
+    int req_n;
+    int req_left;
 
     int fd;
     bool connected;
+
+    struct timeval start;
+    struct timeval end;
 };
 
 static struct buffer *cli_encode_req(struct dubbo_client *cli)
@@ -60,28 +59,6 @@ static struct buffer *cli_encode_req(struct dubbo_client *cli)
 
 #define cli_decode_resp(cli) cli_decode_resp_frombuf(((struct dubbo_client *)(cli))->rcv_buf)
 
-struct dubbo_client *cli_create(struct aeEventLoop *el, struct dubbo_args *args, int pipe_n)
-{
-    struct dubbo_client *cli = calloc(1, sizeof(*cli));
-    assert(cli);
-    cli->el = el;
-
-    cli->rcv_buf = buf_create(CLI_INIT_BUF_SZ);
-    cli->snd_buf = buf_create(CLI_INIT_BUF_SZ);
-    cli->pipe_n = pipe_n;
-    cli->pipe_left = pipe_n;
-    cli->args = args;
-    cli_reset(cli);
-    return cli;
-}
-
-void cli_release(struct dubbo_client *cli)
-{
-    buf_release(cli->rcv_buf);
-    buf_release(cli->snd_buf);
-    free(cli);
-}
-
 static void cli_reset(struct dubbo_client *cli)
 {
     cli->connected = false;
@@ -91,14 +68,24 @@ static void cli_reset(struct dubbo_client *cli)
     buf_retrieveAll(cli->snd_buf);
 }
 
-static void cli_close(struct dubbo_client *cli)
+static struct dubbo_client *cli_create(struct dubbo_args *args, struct dubbo_async_args *async_args)
 {
-    aeDeleteFileEvent(cli->el, cli->fd, AE_READABLE | AE_WRITABLE);
-    close(cli->fd);
+    struct dubbo_client *cli = calloc(1, sizeof(*cli));
+    assert(cli);
+    cli->el = async_args->el;
+
+    cli->rcv_buf = buf_create(CLI_INIT_BUF_SZ);
+    cli->snd_buf = buf_create(CLI_INIT_BUF_SZ);
+    cli->pipe_n = async_args->pipe_n;
+    cli->pipe_left = async_args->pipe_n;
+    cli->req_n = async_args->req_n;
+    cli->req_left = async_args->req_n;
+    cli->args = args;
     cli_reset(cli);
+    return cli;
 }
 
-static bool cli_connect(struct dubbo_client *cli)
+bool cli_connect(struct dubbo_client *cli)
 {
     int fd = anetTcpNonBlockConnect(err, cli->args->host, atoi(cli->args->port));
     if (fd == ANET_ERR)
@@ -115,6 +102,35 @@ static bool cli_connect(struct dubbo_client *cli)
         return false;
     }
     return true;
+}
+
+static void cli_close(struct dubbo_client *cli)
+{
+    aeDeleteFileEvent(cli->el, cli->fd, AE_READABLE | AE_WRITABLE);
+    close(cli->fd);
+    cli_reset(cli);
+}
+
+static void cli_release(struct dubbo_client *cli)
+{
+    buf_release(cli->rcv_buf);
+    buf_release(cli->snd_buf);
+    free(cli);
+}
+
+static bool cli_start(struct dubbo_client *cli)
+{
+    gettimeofday(&cli->start, NULL);
+    return cli_connect(cli);
+}
+
+// fixme at exit
+static void cli_end(struct dubbo_client *cli)
+{
+    cli_close(cli);
+    gettimeofday(&cli->end, NULL);
+    // fixme qps
+    cli_release(cli);
 }
 
 static void cli_reconnect(struct dubbo_client *cli)
@@ -172,6 +188,7 @@ static bool cli_write(struct dubbo_client *cli)
     {
         aeDeleteFileEvent(cli->el, cli->fd, AE_WRITABLE);
     }
+    return true;
 }
 
 static void cli_send_req(struct dubbo_client *cli)
@@ -250,9 +267,17 @@ static void cli_on_recv(struct aeEventLoop *el, int fd, void *ud, int mask)
         }
         if (is_completed_dubbo_pkt(cli->rcv_buf, NULL))
         {
-            cli->pipe_left++;
             cli_decode_resp(cli);
-            goto send;
+            cli->pipe_left++;
+            cli->req_left--;
+            if (cli->req_left <= 0)
+            {
+                cli_end(cli);
+            }
+            else
+            {
+                goto send;
+            }
         }
         return;
     }
@@ -273,7 +298,7 @@ static void cli_decode_resp_frombuf(struct buffer *buf)
     struct dubbo_res *res = dubbo_decode(buf);
     if (res == NULL)
     {
-        return false;
+        return;
     }
 
     if (res->is_evt)
@@ -295,36 +320,45 @@ static void cli_decode_resp_frombuf(struct buffer *buf)
             {
                 if (res->ok)
                 {
-                    LOG_INFO("%s", cJSON_Print(resp));
+                    printf("\x1B[1;32m%s\x1B[0m\n", cJSON_Print(resp));
                 }
                 else
                 {
-                    LOG_ERROR("%s", res->desc);
-                    LOG_ERROR("%s", cJSON_Print(resp));
+                    printf("\x1B[1;31m%s\x1B[0m\n", res->desc);
+                    printf("\x1B[1;31m%s\x1B[0m\n", cJSON_Print(resp));
                 }
                 cJSON_Delete(resp);
             }
             else
             {
-                LOG_INFO("%s", res->data);
+                printf("\x1B[1;32m%s\x1B[0m\n", res->data);
             }
             free(json);
         }
         else
         {
-            LOG_ERROR("%s", res->data);
+            printf("\x1B[1;32m%s\x1B[0m\n", res->data);
         }
     }
 
     dubbo_res_release(res);
-    return true;
+    return;
+}
+
+bool dubbo_bench_async(struct dubbo_args *args, struct dubbo_async_args *async_args)
+{
+    struct dubbo_client *cli = cli_create(args, async_args);
+    if (cli == NULL)
+    {
+        return false;
+    }
+    return cli_start(cli);
 }
 
 bool dubbo_invoke_sync(struct dubbo_args *args)
 {
     bool ret = false;
-    struct dubbo_res *res = NULL;
-
+    
     struct dubbo_req *req = dubbo_req_create(args->service, args->method, args->args, args->attach);
     if (req == NULL)
     {

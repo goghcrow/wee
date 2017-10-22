@@ -15,13 +15,14 @@ struct dubbo_args
     struct timeval timeout;
 };
 
-struct dubbo_client
+struct dubbo_async_args
 {
-    // struct buf;
-    // callback ...
+    struct aeEventLoop *el;
+    int pipe_n;
+    int req_n;
 };
 
 bool dubbo_invoke_sync(struct dubbo_args *);
-// bool dubbo_invoke_async(struct dubbo_args *);
+bool dubbo_bench_async(struct dubbo_args *, struct dubbo_async_args *);
 
 #endif
