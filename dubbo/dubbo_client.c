@@ -88,7 +88,8 @@ static struct dubbo_client *cli_create(struct dubbo_args *args, struct dubbo_asy
     {
         PANIC("%s DNS解析失败", cli->args->host);
     }
-    cli->addr.v4.sin_port = (in_port_t)atoi(cli->args->port);
+
+    cli->addr.v4.sin_port = htons(atoi(cli->args->port));
     return cli;
 }
 
