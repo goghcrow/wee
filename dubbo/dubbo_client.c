@@ -41,7 +41,6 @@ struct dubbo_client
     struct timeval end;
 };
 
-
 static void cli_on_connect(struct aeEventLoop *el, int fd, void *ud, int mask);
 static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask);
 static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask);
@@ -260,9 +259,9 @@ static void cli_on_connect(struct aeEventLoop *el, int fd, void *ud, int mask)
 {
     struct dubbo_client *cli = (struct dubbo_client *)ud;
     // 注意: ae 将 err 与 hup 转换成 write 事件
-    if ((mask & AE_WRITABLE)/* && !(mask & AE_READABLE)*/)
+    if ((mask & AE_WRITABLE) /* && !(mask & AE_READABLE)*/)
     {
-        aeDeleteFileEvent(el, fd, AE_WRITABLE/* | AE_READABLE*/ );
+        aeDeleteFileEvent(el, fd, AE_WRITABLE /* | AE_READABLE*/);
         // 所以, 可能出错 !!!
         cli_connected(cli);
     }
@@ -368,14 +367,14 @@ static bool cli_decode_resp_frombuf(struct buffer *buf)
     }
     else if (res->data_sz)
     {
-        if (res->data[0] == '[' || res->data[0] == '{')
-        {
-            // 返回 json, 不应该有 NULL 存在, 且非 NULL 结尾
-            char *json = malloc(res->data_sz + 1);
-            assert(json);
-            memcpy(json, res->data, res->data_sz);
-            json[res->data_sz] = '\0';
+        // 返回 json, 不应该有 NULL 存在, 且非 NULL 结尾
+        char *json = malloc(res->data_sz + 1);
+        assert(json);
+        memcpy(json, res->data, res->data_sz);
+        json[res->data_sz] = '\0';
 
+        if (json[0] == '[' || json[0] == '{')
+        {
             cJSON *resp = cJSON_Parse(json);
             if (resp)
             {
@@ -392,14 +391,14 @@ static bool cli_decode_resp_frombuf(struct buffer *buf)
             }
             else
             {
-                printf("\x1B[1;32m%s\x1B[0m\n", res->data);
+                printf("\x1B[1;32m%s\x1B[0m\n", json);
             }
-            free(json);
         }
         else
         {
-            printf("\x1B[1;32m%s\x1B[0m\n", res->data);
+            printf("\x1B[1;32m%s\x1B[0m\n", json);
         }
+        free(json);
     }
 
     dubbo_res_release(res);
