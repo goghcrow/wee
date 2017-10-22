@@ -9,11 +9,10 @@
 #include <unistd.h>
 #include <errno.h>
 
-#include "../ae/ae.h"
-#include "../ae/anet.h"
-
 #include "dubbo_codec.h"
 #include "dubbo_client.h"
+
+#include "../ae/ae.h"
 #include "../net/socket.h"
 #include "../base/buffer.h"
 #include "../base/cJSON.h"
@@ -22,16 +21,11 @@
 
 #define CLI_INIT_BUF_SZ 1024
 
-static char err[ANET_ERR_LEN];
-
-static void cli_on_recv(struct aeEventLoop *el, int fd, void *ud, int mask);
-static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask);
-static bool cli_decode_resp_frombuf(struct buffer *buf);
-
 struct dubbo_client
 {
     struct aeEventLoop *el;
     struct dubbo_args *args;
+    union sockaddr_all addr;
 
     struct buffer *rcv_buf;
     struct buffer *snd_buf;
@@ -46,6 +40,13 @@ struct dubbo_client
     struct timeval start;
     struct timeval end;
 };
+
+
+static void cli_on_connect(struct aeEventLoop *el, int fd, void *ud, int mask);
+static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask);
+static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask);
+static bool cli_decode_resp_frombuf(struct buffer *buf);
+static void cli_pipe_send(struct dubbo_client *cli);
 
 static struct buffer *cli_encode_req(struct dubbo_client *cli)
 {
@@ -82,27 +83,61 @@ static struct dubbo_client *cli_create(struct dubbo_args *args, struct dubbo_asy
     cli->req_left = async_args->req_n;
     cli->args = args;
     cli_reset(cli);
+
+    if (!sa_resolve(cli->args->host, &cli->addr))
+    {
+        PANIC("%s DNS解析失败", cli->args->host);
+    }
     return cli;
+}
+
+static bool cli_connected(struct dubbo_client *cli)
+{
+    cli->connected = true;
+    if (AE_ERR == aeCreateFileEvent(cli->el, cli->fd, AE_READABLE, cli_on_read, cli))
+    {
+        return false;
+    }
+    cli_pipe_send(cli);
+    return true;
 }
 
 bool cli_connect(struct dubbo_client *cli)
 {
-    int fd = anetTcpNonBlockConnect(err, cli->args->host, atoi(cli->args->port));
-    if (fd == ANET_ERR)
+    int fd = socket_create();
+    if (fd < 0)
     {
-        LOG_ERROR("连接失败:%s", err);
         return false;
     }
-    anetEnableTcpNoDelay(err, fd);
-    anetTcpKeepAlive(err, fd);
     cli->fd = fd;
 
-    if (AE_ERR == aeCreateFileEvent(cli->el, fd, AE_READABLE, cli_on_recv, cli))
+    int status = socket_connect(fd, &cli->addr, sizeof(cli->addr.s));
+    if (status == 0)
     {
-        close(fd);
-        return false;
+        if (!cli_connected(cli))
+        {
+            goto close;
+        }
+    }
+    else
+    {
+        if (errno == EINPROGRESS)
+        {
+            if (AE_ERR == aeCreateFileEvent(cli->el, fd, AE_READABLE, cli_on_connect, cli))
+            {
+                goto close;
+            }
+        }
+        else
+        {
+            goto close;
+        }
     }
     return true;
+
+close:
+    close(fd);
+    return false;
 }
 
 static void cli_close(struct dubbo_client *cli)
@@ -210,6 +245,29 @@ static void cli_send_req(struct dubbo_client *cli)
     }
 }
 
+static void cli_pipe_send(struct dubbo_client *cli)
+{
+    while (cli->pipe_left--)
+    {
+        cli_send_req(cli);
+    }
+}
+
+static void cli_on_connect(struct aeEventLoop *el, int fd, void *ud, int mask)
+{
+    struct dubbo_client *cli = (struct dubbo_client *)ud;
+    if ((mask & AE_WRITABLE) && !(mask & AE_READABLE))
+    {
+        aeDeleteFileEvent(el, fd, mask);
+        cli_connected(cli);
+    }
+    else
+    {
+        LOG_ERROR("连接失败: %s", strerror(errno));
+        cli_reconnect(cli);
+    }
+}
+
 static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask)
 {
     UNUSED(el);
@@ -223,81 +281,71 @@ static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask)
     }
 }
 
-static void cli_on_recv(struct aeEventLoop *el, int fd, void *ud, int mask)
+static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask)
 {
     UNUSED(el);
     UNUSED(mask);
 
     struct dubbo_client *cli = (struct dubbo_client *)ud;
-    if (cli->connected)
-    {
-        for (;;)
-        {
-            int errno_ = 0;
-            ssize_t recv_n = buf_readFd(cli->rcv_buf, fd, &errno_);
-            if (recv_n < 0)
-            {
-                if (errno_ == EINTR)
-                {
-                    continue;
-                }
-                else if (errno_ == EAGAIN)
-                {
-                }
-                else
-                {
-                    LOG_ERROR("从 Dubbo 服务端读取数据: %s", strerror(errno));
-                    cli_reconnect(cli);
-                    return;
-                }
-            }
-            else if (recv_n == 0)
-            {
-                LOG_ERROR("Dubbo 服务端断开连接");
-                cli_reconnect(cli);
-                return;
-            }
-            break;
-        }
+    assert(cli->connected);
 
-        if (!is_dubbo_pkt(cli->rcv_buf))
+    for (;;)
+    {
+        int errno_ = 0;
+        ssize_t recv_n = buf_readFd(cli->rcv_buf, fd, &errno_);
+        if (recv_n < 0)
         {
-            LOG_ERROR("接收到非 dubbo 数据包");
-            cli_reconnect(cli);
-        }
-        if (is_completed_dubbo_pkt(cli->rcv_buf, NULL))
-        {
-            cli->pipe_left++;
-            cli->req_left--;
-            bool ok = cli_decode_resp(cli);
-            if (cli->req_left <= 0)
+            if (errno_ == EINTR)
             {
-                cli_end(cli);
+                continue;
+            }
+            else if (errno_ == EAGAIN)
+            {
             }
             else
             {
-                if (ok)
-                {
-                    goto send;
-                }
-                else
-                {
-                    cli_reconnect(cli);
-                    return;
-                }
+                LOG_ERROR("从 Dubbo 服务端读取数据: %s", strerror(errno));
+                cli_reconnect(cli);
+                return;
             }
         }
+        else if (recv_n == 0)
+        {
+            LOG_ERROR("Dubbo 服务端断开连接");
+            cli_reconnect(cli);
+            return;
+        }
+        break;
+    }
+
+    if (!is_dubbo_pkt(cli->rcv_buf))
+    {
+        LOG_ERROR("接收到非 dubbo 数据包");
+        cli_reconnect(cli);
+    }
+
+    if (!is_completed_dubbo_pkt(cli->rcv_buf, NULL))
+    {
         return;
+    }
+
+    cli->pipe_left++;
+    cli->req_left--;
+    bool ok = cli_decode_resp(cli);
+    if (cli->req_left <= 0)
+    {
+        cli_end(cli);
     }
     else
     {
-        cli->connected = true;
-    }
-
-send:
-    while (cli->pipe_left--)
-    {
-        cli_send_req(cli);
+        if (ok)
+        {
+            cli_pipe_send(cli);
+        }
+        else
+        {
+            cli_reconnect(cli);
+        }
     }
 }
 

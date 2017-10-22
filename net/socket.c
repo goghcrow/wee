@@ -89,14 +89,9 @@ int socket_acceptSync(int sockfd, union sockaddr_all *addr, socklen_t *addrlen)
     return socket_accept_(sockfd, addr, addrlen, false);
 }
 
-bool socket_connect(int sockfd, const union sockaddr_all *addr, socklen_t addrlen)
+int socket_connect(int sockfd, const union sockaddr_all *addr, socklen_t addrlen)
 {
-    if (connect(sockfd, (struct sockaddr *)addr, addrlen) < 0)
-    {
-        perror("ERROR connect");
-        return false;
-    }
-    return true;
+    return connect(sockfd, (struct sockaddr *)addr, addrlen);
 }
 
 ssize_t socket_read(int sockfd, void *buf, size_t count)

@@ -16,7 +16,7 @@ int socket_create();
 bool socket_bind(int sockfd, const union sockaddr_all *addr, socklen_t addrlen);
 bool socket_listen(int sockfd);
 int socket_accept(int sockfd, union sockaddr_all *addr, socklen_t *addrlen);
-bool socket_connect(int sockfd, const union sockaddr_all *addr, socklen_t addrlen);
+int socket_connect(int sockfd, const union sockaddr_all *addr, socklen_t addrlen);
 ssize_t socket_read(int sockfd, void *buf, size_t count);
 ssize_t socket_readv(int sockfd, const struct iovec *iov, int iovcnt);
 ssize_t socket_write(int sockfd, const void *buf, size_t count);
