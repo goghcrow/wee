@@ -174,6 +174,7 @@ static void cli_end(struct dubbo_client *cli)
 
 static void cli_reconnect(struct dubbo_client *cli)
 {
+    LOG_INFO("关闭异常连接并重连");
     cli_close(cli);
     if (!cli_connect(cli))
     {
