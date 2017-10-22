@@ -253,6 +253,7 @@ static void cli_pipe_send(struct dubbo_client *cli)
     {
         cli_send_req(cli);
     }
+    cli->pipe_left++;
 }
 
 static void cli_on_connect(struct aeEventLoop *el, int fd, void *ud, int mask)
