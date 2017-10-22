@@ -256,9 +256,11 @@ static void cli_pipe_send(struct dubbo_client *cli)
 static void cli_on_connect(struct aeEventLoop *el, int fd, void *ud, int mask)
 {
     struct dubbo_client *cli = (struct dubbo_client *)ud;
-    if ((mask & AE_WRITABLE) && !(mask & AE_READABLE))
+    // 注意: ae 将 err 与 hup 转换成 write 事件
+    if ((mask & AE_WRITABLE)/* && !(mask & AE_READABLE)*/)
     {
         aeDeleteFileEvent(el, fd, mask);
+        // 所以, 可能出错 !!!
         cli_connected(cli);
     }
     else
