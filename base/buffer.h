@@ -2,7 +2,7 @@
 #define BUFFER_H
 
 #include <stdint.h>
-#include <stddef.h> /*size_t*/
+#include <stddef.h>    /*size_t*/
 #include <sys/types.h> /*ssize_t*/
 
 #define BufCheapPrepend 8
@@ -13,6 +13,8 @@ struct buffer;
 
 struct buffer *buf_create_ex(size_t size, size_t prepend_size);
 void buf_release(struct buffer *buf);
+size_t buf_getReadIndex(struct buffer *buf);
+void buf_setReadIndex(struct buffer *buf, size_t read_idx);
 size_t buf_getWriteIndex(struct buffer *buf);
 void buf_setWriteIndex(struct buffer *buf, size_t write_idx);
 size_t buf_readable(const struct buffer *buf);

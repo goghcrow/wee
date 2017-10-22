@@ -7,7 +7,6 @@
 #include "endian.h"
 #include "buffer.h"
 
-
 struct buffer
 {
     char *read_idx;
@@ -41,6 +40,17 @@ void buf_release(struct buffer *buf)
 {
     free(buf->buf);
     free(buf);
+}
+
+size_t buf_getReadIndex(struct buffer *buf)
+{
+    return buf->read_idx - buf->buf;
+}
+
+void buf_setReadIndex(struct buffer *buf, size_t read_idx)
+{
+    assert(read_idx > 0 && read_idx <= (buf->write_idx - buf->buf));
+    buf->read_idx = buf->buf + read_idx;
 }
 
 size_t buf_getWriteIndex(struct buffer *buf)

@@ -436,6 +436,9 @@ struct dubbo_res *dubbo_decode(struct buffer *buf)
         return NULL;
     }
 
+    size_t r_idx = buf_getReadIndex(buf);
+    size_t r_idx_nxt = hdr.body_sz + r_idx;
+
     struct dubbo_res *res = calloc(1, sizeof(*res));
     assert(res);
     res->type = -1;
@@ -445,6 +448,10 @@ struct dubbo_res *dubbo_decode(struct buffer *buf)
         free(res);
         return NULL;
     }
+
+    // 跳過 attach
+    assert(buf_getReadIndex(buf) <= r_idx_nxt);
+    buf_setReadIndex(buf, r_idx_nxt);
 
     return res;
 }
