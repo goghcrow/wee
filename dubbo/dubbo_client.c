@@ -26,7 +26,7 @@ static char err[ANET_ERR_LEN];
 
 static void cli_on_recv(struct aeEventLoop *el, int fd, void *ud, int mask);
 static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask);
-static void cli_decode_resp_frombuf(struct buffer *buf);
+static bool cli_decode_resp_frombuf(struct buffer *buf);
 
 struct dubbo_client
 {
@@ -90,6 +90,7 @@ bool cli_connect(struct dubbo_client *cli)
     int fd = anetTcpNonBlockConnect(err, cli->args->host, atoi(cli->args->port));
     if (fd == ANET_ERR)
     {
+        LOG_ERROR("连接失败:%s", err);
         return false;
     }
     anetEnableTcpNoDelay(err, fd);
@@ -130,6 +131,7 @@ static void cli_end(struct dubbo_client *cli)
     cli_close(cli);
     gettimeofday(&cli->end, NULL);
     // fixme qps
+    aeStop(cli->el);
     cli_release(cli);
 }
 
@@ -193,8 +195,6 @@ static bool cli_write(struct dubbo_client *cli)
 
 static void cli_send_req(struct dubbo_client *cli)
 {
-    buf_readable(cli->snd_buf);
-
     struct buffer *buf = cli_encode_req(cli);
     if (buf == NULL)
     {
@@ -267,16 +267,24 @@ static void cli_on_recv(struct aeEventLoop *el, int fd, void *ud, int mask)
         }
         if (is_completed_dubbo_pkt(cli->rcv_buf, NULL))
         {
-            cli_decode_resp(cli);
             cli->pipe_left++;
             cli->req_left--;
+            bool ok = cli_decode_resp(cli);
             if (cli->req_left <= 0)
             {
                 cli_end(cli);
             }
             else
             {
-                goto send;
+                if (ok)
+                {
+                    goto send;
+                }
+                else
+                {
+                    cli_reconnect(cli);
+                    return;
+                }
             }
         }
         return;
@@ -293,12 +301,12 @@ send:
     }
 }
 
-static void cli_decode_resp_frombuf(struct buffer *buf)
+static bool cli_decode_resp_frombuf(struct buffer *buf)
 {
     struct dubbo_res *res = dubbo_decode(buf);
     if (res == NULL)
     {
-        return;
+        return false;
     }
 
     if (res->is_evt)
@@ -342,7 +350,7 @@ static void cli_decode_resp_frombuf(struct buffer *buf)
     }
 
     dubbo_res_release(res);
-    return;
+    return true;
 }
 
 bool dubbo_bench_async(struct dubbo_args *args, struct dubbo_async_args *async_args)
@@ -358,7 +366,7 @@ bool dubbo_bench_async(struct dubbo_args *args, struct dubbo_async_args *async_a
 bool dubbo_invoke_sync(struct dubbo_args *args)
 {
     bool ret = false;
-    
+
     struct dubbo_req *req = dubbo_req_create(args->service, args->method, args->args, args->attach);
     if (req == NULL)
     {
