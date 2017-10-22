@@ -21,7 +21,7 @@ struct dubbo_client
     // callback ...
 };
 
-bool dubbo_invoke(struct dubbo_args *);
+bool dubbo_invoke_sync(struct dubbo_args *);
 // bool dubbo_invoke_async(struct dubbo_args *);
 
 #endif

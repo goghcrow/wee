@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-
 static void crash_handler(int sig)
 {
     int pid;
@@ -36,7 +35,7 @@ static void crash_handler(int sig)
     {
         while (1)
         {
-            sleep(3);   /* Give gdb time to attach */
+            sleep(3);      /* Give gdb time to attach */
             /* _exit(); */ /* You can skip this line by telling gdb to return */
         }
     }
@@ -90,7 +89,6 @@ int main(int argc, char **argv)
 }
 */
 
-
 // ****************************************************************************************************
 
 void die(const char *fmt, ...)
@@ -110,7 +108,9 @@ void bin2p(const char *bin, int sz)
     int count = 100;
     int i;
     for (i = 0; i < count; i++)
+    {
         putchar(c);
+    }
     puts("");
 
     fwrite(bin, sizeof(char), sz, stdout);

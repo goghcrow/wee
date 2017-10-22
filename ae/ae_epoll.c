@@ -121,6 +121,14 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
 
             if (e->events & EPOLLIN) mask |= AE_READABLE;
             if (e->events & EPOLLOUT) mask |= AE_WRITABLE;
+            // 这里将 EPOLLERR 与 EPOLLHUP 转换成 WRITABLE 事件, 是为了简化处理
+            // man 手册 标记可以不处理 EPOLLERR 与 EPOLLHUP, 但是会导致 cpu 100% 故障
+            // 比如 skynet的 issues: https://github.com/cloudwu/skynet/issues/644
+            // https://blog.codingnow.com/2017/05/epoll_close_without_del.html
+            // https://github.com/zhangshiqian1214/skynet/commit/b38951a4fa066fbc7da17f7dffaaf9ce0710582b
+            // https://stackoverflow.com/questions/30529883/what-do-epollerr-and-epollhup-really-mean-and-how-to-deal-with-them
+            // https://github.com/antirez/redis/pull/569
+            // 个人认为这里将 ERR 和 HUP 当成 WRITABLE 或者 READABLE 都可以, 但是都要保证正确判断 read 与 write 返回值
             if (e->events & EPOLLERR) mask |= AE_WRITABLE;
             if (e->events & EPOLLHUP) mask |= AE_WRITABLE;
             eventLoop->fired[j].fd = e->data.fd;

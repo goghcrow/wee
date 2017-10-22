@@ -78,6 +78,7 @@ void shutdown()
 
 int main(int argc, char **argv)
 {
+    // fix catch siginit signal -> shutdown
     atexit(shutdown);
 
     struct dubbo_bench bench;
@@ -161,8 +162,8 @@ int main(int argc, char **argv)
 
     if (bench.reqs == 1)
     {
-        return dubbo_invoke(&args) ? 0 : 1;
+        return dubbo_invoke_sync(&args) ? 0 : 1;
     }
 
-    return dubbo_invoke(&args) ? 0 : 1;
+    return dubbo_invoke_sync(&args) ? 0 : 1;
 }
