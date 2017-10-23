@@ -141,7 +141,7 @@ int main(int argc, char **argv)
     ASSERT_OPT(json_attach && cJSON_IsObject(json_attach), "Invalid Attach JSON Format as %s", args.attach);
     cJSON_Delete(json_attach);
 
-    fprintf(stderr, "Invoking dubbo://%s:%s/%s.%s?args=%s&attach=%s\n", args.host, args.port, args.service, args.method, args.args, args.attach);
+    // fprintf(stderr, "Invoking dubbo://%s:%s/%s.%s?args=%s&attach=%s\n", args.host, args.port, args.service, args.method, args.args, args.attach);
 
     if (async_args.req_n > 0 && async_args.pipe_n > 0)
     {
