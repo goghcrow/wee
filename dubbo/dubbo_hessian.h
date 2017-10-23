@@ -5,6 +5,9 @@
 #include <stdbool.h>
 #include <unistd.h>
 
+size_t utf8len(const char *s, size_t sz);
+int utf8cpy(uint8_t *dst, const uint8_t *src, size_t sz);
+
 int hs_encode_null(uint8_t *out);
 bool hs_decode_null(const uint8_t *buf, size_t sz);
 

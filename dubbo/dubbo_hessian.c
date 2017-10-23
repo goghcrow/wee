@@ -7,8 +7,23 @@
 #include "dubbo_hessian.h"
 #include "../base/endian.h"
 
+size_t utf8len(const char *s, size_t sz)
+{
+    size_t len = 0;
+    size_t i = 0;
+    // for (; *s; ++s)
+    for (; i < sz; i++)
+    {
+        if ((*s & 0xC0) != 0x80)
+        {
+            ++len;
+        }
+    }
+    return len;
+}
+
 // 复制 size 个 utf8 字符, 返回实际复制字节数, 遇到非法 utf8 字符返回 -1
-static int utf8cpy(uint8_t *dst, const uint8_t *src, size_t sz)
+int utf8cpy(uint8_t *dst, const uint8_t *src, size_t sz)
 {
     int i = 0;
     uint8_t c;

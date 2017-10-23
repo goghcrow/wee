@@ -317,7 +317,8 @@ static bool encode_req(struct buffer *buf, const struct dubbo_req *req)
             return false;
         }
     }
-    hdr.body_sz = buf_readable(buf);
+    // hdr.body_sz = buf_readable(buf);
+    hdr.body_sz = utf8len(buf_peek(buf), buf_readable(buf));
 
     if (!encode_req_hdr(buf, &hdr))
     {
