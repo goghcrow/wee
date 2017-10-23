@@ -65,16 +65,8 @@ static char *trim_opt(char *opt)
     return opt;
 }
 
-void shutdown()
-{
-    puts("TODO: shutdown to calc qps");
-}
-
 int main(int argc, char **argv)
 {
-    // fix catch siginit signal -> shutdown
-    atexit(shutdown);
-
     struct dubbo_async_args async_args;
     memset(&async_args, 0, sizeof(async_args));
     async_args.req_n = 0;

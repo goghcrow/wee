@@ -8,6 +8,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <signal.h>
+#include <math.h>
 
 #include "dubbo_codec.h"
 #include "dubbo_client.h"
@@ -21,6 +23,10 @@
 
 #define CLI_INIT_BUF_SZ 1024
 
+static struct dubbo_client *g_cli;
+
+// fixme 打印进度
+// fixme ok ko 统计
 struct dubbo_client
 {
     struct aeEventLoop *el;
@@ -33,9 +39,12 @@ struct dubbo_client
     int pipe_left;
     int req_n;
     int req_left;
+    int ok_n;
+    int ko_n;
 
     int fd;
     bool connected;
+    bool run;
 
     struct timeval start;
     struct timeval end;
@@ -44,8 +53,11 @@ struct dubbo_client
 static void cli_on_connect(struct aeEventLoop *el, int fd, void *ud, int mask);
 static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask);
 static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask);
+
 static bool cli_decode_resp_frombuf(struct buffer *buf);
 static void cli_pipe_send(struct dubbo_client *cli);
+static bool cli_start(struct dubbo_client *cli);
+static void cli_end(struct dubbo_client *cli);
 
 static struct buffer *cli_encode_req(struct dubbo_client *cli)
 {
@@ -80,6 +92,10 @@ static struct dubbo_client *cli_create(struct dubbo_args *args, struct dubbo_asy
     cli->pipe_left = async_args->pipe_n;
     cli->req_n = async_args->req_n;
     cli->req_left = async_args->req_n;
+    cli->run = false;
+    cli->ok_n = 0;
+    cli->ko_n = 0;
+
     cli->args = args;
     cli_reset(cli);
 
@@ -156,20 +172,56 @@ static void cli_release(struct dubbo_client *cli)
     free(cli);
 }
 
+void exit_handler()
+{
+    if (g_cli && g_cli->run)
+    {
+        cli_end(g_cli);
+    }
+}
+
+void int_handler(int dummy)
+{
+    if (g_cli && g_cli->run)
+    {
+        cli_end(g_cli);
+    }
+}
+
 static bool cli_start(struct dubbo_client *cli)
 {
+    if (cli->run)
+    {
+        return false;
+    }
+
+    atexit(exit_handler);
+    signal(SIGINT, int_handler);
     gettimeofday(&cli->start, NULL);
+
+    g_cli = cli;
+    cli->run = true;
+
     return cli_connect(cli);
 }
 
-// fixme at exit
 static void cli_end(struct dubbo_client *cli)
 {
-    cli_close(cli);
-    gettimeofday(&cli->end, NULL);
-    // fixme qps
-    aeStop(cli->el);
-    cli_release(cli);
+    if (cli->run)
+    {
+        cli_close(cli);
+
+        gettimeofday(&cli->end, NULL);
+        g_cli = NULL;
+        cli->run = false;
+
+        float elapsed_sec = (cli->end.tv_sec - cli->start.tv_sec) + (cli->end.tv_usec - cli->start.tv_usec) / 1000000;
+        int reqs = cli->req_n - cli->req_left;
+        LOG_INFO("COST %.2fs REQ %d QPS %02f", elapsed_sec, reqs, floor(reqs / elapsed_sec));
+
+        aeStop(cli->el);
+        cli_release(cli);
+    }
 }
 
 static void cli_reconnect(struct dubbo_client *cli)
