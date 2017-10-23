@@ -9,7 +9,6 @@
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
-#include <math.h>
 
 #include "dubbo_codec.h"
 #include "dubbo_client.h"
