@@ -213,12 +213,12 @@ static void cli_end(struct dubbo_client *cli)
         gettimeofday(&cli->end, NULL);
         g_cli = NULL;
         cli->run = false;
+        aeStop(cli->el);
 
         double elapsed_sec = (cli->end.tv_sec - cli->start.tv_sec) + (cli->end.tv_usec - cli->start.tv_usec) / 1000000;
         int reqs = cli->req_n - cli->req_left;
-        LOG_INFO("COST %.0fs, REQ %d, QPS %.0f", elapsed_sec, reqs, reqs / elapsed_sec);
-
-        aeStop(cli->el);
+        fprintf(stderr, "\x1B[1;32m[SUMMARY] COST %.0fs, REQ %d, QPS %.0f\x1B[0m\n", elapsed_sec, reqs, reqs / elapsed_sec);
+        
         cli_release(cli);
     }
 }
