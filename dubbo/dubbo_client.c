@@ -215,9 +215,9 @@ static void cli_end(struct dubbo_client *cli)
         g_cli = NULL;
         cli->run = false;
 
-        float elapsed_sec = (cli->end.tv_sec - cli->start.tv_sec) + (cli->end.tv_usec - cli->start.tv_usec) / 1000000;
+        double elapsed_sec = (cli->end.tv_sec - cli->start.tv_sec) + (cli->end.tv_usec - cli->start.tv_usec) / 1000000;
         int reqs = cli->req_n - cli->req_left;
-        LOG_INFO("COST %.2fs REQ %d QPS %02f", elapsed_sec, reqs, floor(reqs / elapsed_sec));
+        LOG_INFO("COST %.0fs, REQ %d, QPS %.0f", elapsed_sec, reqs, reqs / elapsed_sec);
 
         aeStop(cli->el);
         cli_release(cli);
