@@ -44,6 +44,7 @@ struct dubbo_client
     int fd;
     bool connected;
     bool run;
+    bool verbos;
 
     struct timeval start;
     struct timeval end;
@@ -53,10 +54,11 @@ static void cli_on_connect(struct aeEventLoop *el, int fd, void *ud, int mask);
 static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask);
 static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask);
 
-static bool cli_decode_resp_frombuf(struct buffer *buf);
 static void cli_pipe_send(struct dubbo_client *cli);
 static bool cli_start(struct dubbo_client *cli);
 static void cli_end(struct dubbo_client *cli);
+
+static bool cli_decode_resp(struct dubbo_client *cli);
 
 static struct buffer *cli_encode_req(struct dubbo_client *cli)
 {
@@ -65,10 +67,12 @@ static struct buffer *cli_encode_req(struct dubbo_client *cli)
     {
         return false;
     }
+    if (cli->verbos)
+    {
+        printf("<req>[seq=%lld]\n", dubbo_req_getid(req));
+    }
     return dubbo_encode(req);
 }
-
-#define cli_decode_resp(cli) cli_decode_resp_frombuf(((struct dubbo_client *)(cli))->rcv_buf)
 
 static void cli_reset(struct dubbo_client *cli)
 {
@@ -84,6 +88,8 @@ static struct dubbo_client *cli_create(struct dubbo_args *args, struct dubbo_asy
     struct dubbo_client *cli = calloc(1, sizeof(*cli));
     assert(cli);
     cli->el = async_args->el;
+
+    cli->verbos = async_args->verbos;
 
     cli->rcv_buf = buf_create(CLI_INIT_BUF_SZ);
     cli->snd_buf = buf_create(CLI_INIT_BUF_SZ);
@@ -217,7 +223,7 @@ static void cli_end(struct dubbo_client *cli)
 
         double elapsed_sec = (cli->end.tv_sec - cli->start.tv_sec) + (cli->end.tv_usec - cli->start.tv_usec) / 1000000;
         int reqs = cli->req_n - cli->req_left;
-        fprintf(stderr, "\x1B[1;32m[SUMMARY] COST %.0fs, REQ %d, QPS %.0f\x1B[0m\n", elapsed_sec, reqs, reqs / elapsed_sec);
+        fprintf(stderr, "\x1B[1;32m[SUMMARY]\x1B[0m COST %.0fs, REQ %d, SUCC %d, FAIL %d, QPS %.0f\n", elapsed_sec, reqs, cli->ok_n, cli->ko_n, reqs / elapsed_sec);
 
         cli_release(cli);
     }
@@ -388,70 +394,92 @@ static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask)
 
     cli->pipe_left++;
     cli->req_left--;
-    bool ok = cli_decode_resp(cli);
+
+    if (((cli->req_n - cli->req_left) % 1000) == 0) {
+        fprintf(stderr, "已发送请求 %d\n", cli->req_n - cli->req_left);
+    }
+    
     if (cli->req_left <= 0)
     {
         cli_end(cli);
+        return;
+    }
+
+    if (cli_decode_resp(cli))
+    {
+        cli_pipe_send(cli);
     }
     else
     {
-        if (ok)
-        {
-            cli_pipe_send(cli);
-        }
-        else
-        {
-            cli_reconnect(cli);
-        }
+        cli_reconnect(cli);
     }
 }
 
-static bool cli_decode_resp_frombuf(struct buffer *buf)
+static bool cli_decode_resp(struct dubbo_client *cli)
 {
+    struct buffer *buf = cli->rcv_buf;
     struct dubbo_res *res = dubbo_decode(buf);
     if (res == NULL)
     {
         return false;
     }
 
-    if (res->is_evt)
+    if (res->ok)
     {
-        LOG_INFO("接收到 dubbo 事件包");
+        cli->ok_n++;
     }
-    else if (res->data_sz)
+    else
     {
-        // 返回 json, 不应该有 NULL 存在, 且非 NULL 结尾
-        char *json = malloc(res->data_sz + 1);
-        assert(json);
-        memcpy(json, res->data, res->data_sz);
-        json[res->data_sz] = '\0';
+        cli->ok_n++;
+    }
 
-        if (json[0] == '[' || json[0] == '{')
+    if (cli->verbos)
+    {
+        if (res->is_evt)
         {
-            cJSON *resp = cJSON_Parse(json);
-            if (resp)
+            printf("<res seq=%lld> [EVT]", res->reqid);
+        }
+        else if (res->data_sz)
+        {
+            // 返回 json, 不应该有 NULL 存在, 且非 NULL 结尾
+            char *json = malloc(res->data_sz + 1);
+            assert(json);
+            memcpy(json, res->data, res->data_sz);
+            json[res->data_sz] = '\0';
+
+            if (json[0] == '[' || json[0] == '{')
             {
-                if (res->ok)
+                cJSON *resp = cJSON_Parse(json);
+                if (resp)
                 {
-                    printf("\x1B[1;32m%s\x1B[0m\n", cJSON_Print(resp));
+                    if (res->ok)
+                    {
+                        printf("<res seq=%lld> [\x1B[1;32mSUCC\x1B[0m] %s\n", res->reqid, cJSON_Print(resp));
+                    }
+                    else
+                    {
+                        printf("<res seq=%lld> [\x1B[1;31mFAIL\x1B[0m] [\x1B[1;31m%s\x1B[0m] %s\n", res->reqid, res->desc, cJSON_Print(resp));
+                    }
+                    cJSON_Delete(resp);
                 }
                 else
                 {
-                    printf("\x1B[1;31m%s\x1B[0m\n", res->desc);
-                    printf("\x1B[1;31m%s\x1B[0m\n", cJSON_Print(resp));
+                    printf("<res seq=%lld> [\x1B[1;32mSUCC\x1B[0m] %s\n", res->reqid, json);
                 }
-                cJSON_Delete(resp);
             }
             else
             {
-                printf("\x1B[1;32m%s\x1B[0m\n", json);
+                if (res->ok)
+                {
+                    printf("<res seq=%lld> [\x1B[1;32mSUCC\x1B[0m] %s\n", res->reqid, json);
+                }
+                else
+                {
+                    printf("<res seq=%lld> [\x1B[1;31mFAIL\x1B[0m] %s\n", res->reqid, json);
+                }
             }
+            free(json);
         }
-        else
-        {
-            printf("\x1B[1;32m%s\x1B[0m\n", json);
-        }
-        free(json);
     }
 
     dubbo_res_release(res);

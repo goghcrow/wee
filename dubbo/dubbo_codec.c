@@ -60,7 +60,7 @@ public interface GenericService {
 
 struct dubbo_req
 {
-    int64_t id;
+    int64_t reqid;
     bool is_twoway;
     bool is_evt;
 
@@ -298,7 +298,7 @@ static bool encode_req(struct buffer *buf, const struct dubbo_req *req)
     struct dubbo_hdr hdr;
     memset(&hdr, 0, sizeof(hdr));
 
-    hdr.reqid = next_reqid();
+    hdr.reqid = req->reqid;
     hdr.status = 0;
     hdr.flag = DUBBO_FLAG_REQ | DUBBO_HESSIAN2_SERI_ID;
     if (req->is_twoway)
@@ -369,6 +369,7 @@ struct dubbo_req *dubbo_req_create(const char *service, const char *method, cons
 {
     struct dubbo_req *req = calloc(1, sizeof(*req));
     assert(req);
+    req->reqid = next_reqid();
     req->is_twoway = true;
     req->is_evt = false;
     req->service = strdup(service);
@@ -410,10 +411,14 @@ void dubbo_req_release(struct dubbo_req *req)
     free(req);
 }
 
+int64_t dubbo_req_getid(struct dubbo_req *req)
+{
+    return req->reqid;
+}
+
 struct buffer *dubbo_encode(const struct dubbo_req *req)
 {
     struct buffer *buf = buf_create_ex(DUBBO_BUF_LEN, DUBBO_HDR_LEN);
-
     if (encode_req(buf, req))
     {
         return buf;
@@ -448,6 +453,8 @@ struct dubbo_res *dubbo_decode(struct buffer *buf)
         free(res);
         return NULL;
     }
+
+    res->reqid = hdr.reqid;
 
     // 跳過 attach
     assert(buf_getReadIndex(buf) <= r_idx_nxt);

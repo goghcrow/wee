@@ -14,7 +14,7 @@
 #include "../ae/ae.h"
 
 extern char *optarg;
-static const char *optString = "h:p:m:a:e:t:c:n:?";
+static const char *optString = "h:p:m:a:e:t:c:n:v?";
 
 #define ASSERT_OPT(assert, reason, ...)                                  \
     if (!(assert))                                                       \
@@ -32,7 +32,7 @@ usage()
 {
     static const char *usage =
         "\nUsage:\n"
-        "   dubbo -h<HOST> -p<PORT> -m<METHOD> -a<JSON_ARGUMENTS> [-e<JSON_ATTACHMENT='{}'> -t<TIMEOUT_SEC=5> -c<CONCURRENCY> -n<REQUESTS>]\n\n"
+        "   dubbo -h<HOST> -p<PORT> -m<METHOD> -a<JSON_ARGUMENTS> [-e<JSON_ATTACHMENT='{}'> -t<TIMEOUT_SEC=5> -c<CONCURRENCY> -n<REQUESTS> -v<VERBOS>]\n\n"
         "Example:\n"
         "   dubbo -h127.0.0.1 -p20881 -mcom.youzan.trade.core.biz.HelloService.hello -a \"{}\"\n";
     puts(usage);
@@ -71,6 +71,7 @@ int main(int argc, char **argv)
     memset(&async_args, 0, sizeof(async_args));
     async_args.req_n = 0;
     async_args.pipe_n = 0;
+    async_args.verbos = false;
 
     struct dubbo_args args;
     memset(&args, 0, sizeof(args));
@@ -114,6 +115,9 @@ int main(int argc, char **argv)
             break;
         case 'n':
             async_args.req_n = atoi(optarg);
+            break;
+        case 'v':
+            async_args.verbos = true;
             break;
         case '?':
             usage();

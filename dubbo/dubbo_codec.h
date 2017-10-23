@@ -46,6 +46,7 @@ struct dubbo_req;
 
 struct dubbo_res
 {
+    int64_t reqid;
     bool is_evt;
     bool ok;
     dubbo_res_type type;
@@ -57,7 +58,8 @@ struct dubbo_res
 };
 
 struct dubbo_req *dubbo_req_create(const char *service, const char *method, const char *json_args, const char *json_attach);
-void dubbo_req_release(struct dubbo_req * req);
+void dubbo_req_release(struct dubbo_req *);
+int64_t dubbo_req_getid(struct dubbo_req *);
 void dubbo_res_release(struct dubbo_res *);
 
 struct buffer *dubbo_encode(const struct dubbo_req *);

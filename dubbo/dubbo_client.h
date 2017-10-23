@@ -20,6 +20,7 @@ struct dubbo_async_args
     struct aeEventLoop *el;
     int pipe_n;
     int req_n;
+    bool verbos;
 };
 
 bool dubbo_invoke_sync(struct dubbo_args *);
