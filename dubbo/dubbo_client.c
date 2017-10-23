@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
+#include <inttypes.h> /* PRId64 */
 
 #include "dubbo_codec.h"
 #include "dubbo_client.h"
@@ -69,7 +70,7 @@ static struct buffer *cli_encode_req(struct dubbo_client *cli)
     }
     if (cli->verbos)
     {
-        printf("<req>[seq=%lld]\n", dubbo_req_getid(req));
+        printf("<req>[seq=%" PRId64 "]\n", dubbo_req_getid(req));
     }
     return dubbo_encode(req);
 }
@@ -398,7 +399,7 @@ static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask)
     if (((cli->req_n - cli->req_left) % 1000) == 0) {
         fprintf(stderr, "已发送请求 %d\n", cli->req_n - cli->req_left);
     }
-    
+
     if (cli->req_left <= 0)
     {
         cli_end(cli);
@@ -437,7 +438,7 @@ static bool cli_decode_resp(struct dubbo_client *cli)
     {
         if (res->is_evt)
         {
-            printf("<res seq=%lld> [EVT]", res->reqid);
+            printf("<res seq=%" PRId64 "> [EVT]", res->reqid);
         }
         else if (res->data_sz)
         {
@@ -454,28 +455,28 @@ static bool cli_decode_resp(struct dubbo_client *cli)
                 {
                     if (res->ok)
                     {
-                        printf("<res seq=%lld> [\x1B[1;32mSUCC\x1B[0m] %s\n", res->reqid, cJSON_Print(resp));
+                        printf("<res seq=%" PRId64 "> [\x1B[1;32mSUCC\x1B[0m] %s\n", res->reqid, cJSON_Print(resp));
                     }
                     else
                     {
-                        printf("<res seq=%lld> [\x1B[1;31mFAIL\x1B[0m] [\x1B[1;31m%s\x1B[0m] %s\n", res->reqid, res->desc, cJSON_Print(resp));
+                        printf("<res seq=%" PRId64 "> [\x1B[1;31mFAIL\x1B[0m] [\x1B[1;31m%s\x1B[0m] %s\n", res->reqid, res->desc, cJSON_Print(resp));
                     }
                     cJSON_Delete(resp);
                 }
                 else
                 {
-                    printf("<res seq=%lld> [\x1B[1;32mSUCC\x1B[0m] %s\n", res->reqid, json);
+                    printf("<res seq=%" PRId64 "> [\x1B[1;32mSUCC\x1B[0m] %s\n", res->reqid, json);
                 }
             }
             else
             {
                 if (res->ok)
                 {
-                    printf("<res seq=%lld> [\x1B[1;32mSUCC\x1B[0m] %s\n", res->reqid, json);
+                    printf("<res seq=%" PRId64 "> [\x1B[1;32mSUCC\x1B[0m] %s\n", res->reqid, json);
                 }
                 else
                 {
-                    printf("<res seq=%lld> [\x1B[1;31mFAIL\x1B[0m] %s\n", res->reqid, json);
+                    printf("<res seq=%" PRId64 "> [\x1B[1;31mFAIL\x1B[0m] %s\n", res->reqid, json);
                 }
             }
             free(json);
