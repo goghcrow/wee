@@ -137,7 +137,7 @@ int main(int argc, char **argv)
     ASSERT_OPT(args.timeout.tv_sec > 0, "Timeout must be positive");
 
     cJSON *json_args = cJSON_Parse(args.args);
-    ASSERT_OPT(json_args && cJSON_IsObject(json_args), "Invalid Arguments JSON Format : %s", args.args);
+    ASSERT_OPT(json_args && (cJSON_IsObject(json_args) || cJSON_IsArray(json_args)), "Invalid Arguments JSON Format : %s", args.args);
     cJSON_Delete(json_args);
 
     cJSON *json_attach = cJSON_Parse(args.attach);
