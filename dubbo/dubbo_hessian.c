@@ -12,7 +12,7 @@
 
 static const char digits[] = "0123456789abcdef";
 
-// 非法 utf8 返回 null, 正常返回 非 null 结尾 char*
+// 非法 utf8 返回 null, 正常返回 null 结尾 char*
 char *utf82ascii(char *s)
 {
     struct buffer *buf = buf_create(strlen(s) * 2);
@@ -58,7 +58,7 @@ char *utf82ascii(char *s)
         c = utf8_decode_next();
     }
 
-    char *ret = malloc(buf_readable(buf));
+    char *ret = malloc(buf_readable(buf) + 1);
     assert(ret);
     buf_retrieveAsString(buf, buf_readable(buf), ret);
     buf_release(buf);
