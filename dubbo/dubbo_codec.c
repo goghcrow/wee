@@ -139,7 +139,7 @@ static char *rebuild_json_args(const char *json_str)
     {
         cJSON_AddItemToArray(arr, cJSON_Duplicate(el, true));
     }
-    
+
     cJSON_Delete(root);
     return cJSON_PrintUnformatted(arr);
 }
@@ -436,26 +436,30 @@ struct dubbo_res *dubbo_decode(struct buffer *buf)
         return NULL;
     }
 
-    size_t r_idx = buf_getReadIndex(buf);
-    size_t r_idx_nxt = hdr.body_sz + r_idx;
+    // 读取所有 body+attach
+    // fixme 做一个 buf_view...
+    struct buffer *body_buf = buf_create(hdr.body_sz);
+
+    buf_append(body_buf, buf_peek(buf), hdr.body_sz);
+    buf_retrieve(buf, hdr.body_sz);
 
     struct dubbo_res *res = calloc(1, sizeof(*res));
     assert(res);
     res->type = -1;
+    res->reqid = hdr.reqid;
 
-    if (!(decode_res(buf, &hdr, res)))
+    bool ok = decode_res(body_buf, &hdr, res);
+    buf_release(body_buf);
+
+    if (ok)
+    {
+        return res;
+    }
+    else
     {
         free(res);
         return NULL;
     }
-
-    res->reqid = hdr.reqid;
-
-    // 跳過 attach
-    assert(buf_getReadIndex(buf) <= r_idx_nxt);
-    buf_setReadIndex(buf, r_idx_nxt);
-
-    return res;
 }
 
 bool is_dubbo_pkt(const struct buffer *buf)
