@@ -17,7 +17,7 @@
 #define DUBBO_MAX_PKT_SZ (1024 * 1024 * 4)
 #define DUBBO_HDR_LEN 16
 #define DUBBO_MAGIC 0xdabb
-#define DUBBO_VER "2.0.0"
+#define DUBBO_VER "3.1.0-RELEASE"
 
 /*
 public interface GenericService {
@@ -317,8 +317,7 @@ static bool encode_req(struct buffer *buf, const struct dubbo_req *req)
             return false;
         }
     }
-    // hdr.body_sz = buf_readable(buf);
-    hdr.body_sz = utf8len(buf_peek(buf), buf_readable(buf));
+    hdr.body_sz = buf_readable(buf);
 
     if (!encode_req_hdr(buf, &hdr))
     {
