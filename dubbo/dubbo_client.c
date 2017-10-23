@@ -16,9 +16,9 @@
 
 #include "../ae/ae.h"
 #include "../net/socket.h"
+#include "../net/sa.h"
 #include "../base/buffer.h"
 #include "../base/cJSON.h"
-#include "../base/mq.h"
 #include "../base/dbg.h"
 
 #define CLI_INIT_BUF_SZ 1024

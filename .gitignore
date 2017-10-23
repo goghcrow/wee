@@ -1,3 +1,5 @@
 .vscode
 *.dSYM
 php-ext
+dubbo_ab
+*/.DS_Store
