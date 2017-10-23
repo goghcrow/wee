@@ -186,7 +186,7 @@ void exit_handler()
     }
 }
 
-void int_handler(int dummy)
+void sig_handler(int dummy)
 {
     if (g_cli && g_cli->run)
     {
@@ -203,7 +203,8 @@ static bool cli_start(struct dubbo_client *cli)
     }
 
     atexit(exit_handler);
-    signal(SIGINT, int_handler);
+    signal(SIGINT, sig_handler);
+    signal(SIGTERM, sig_handler);
     gettimeofday(&cli->start, NULL);
 
     g_cli = cli;
