@@ -218,7 +218,7 @@ static void cli_end(struct dubbo_client *cli)
         double elapsed_sec = (cli->end.tv_sec - cli->start.tv_sec) + (cli->end.tv_usec - cli->start.tv_usec) / 1000000;
         int reqs = cli->req_n - cli->req_left;
         fprintf(stderr, "\x1B[1;32m[SUMMARY] COST %.0fs, REQ %d, QPS %.0f\x1B[0m\n", elapsed_sec, reqs, reqs / elapsed_sec);
-        
+
         cli_release(cli);
     }
 }
@@ -553,7 +553,55 @@ bool dubbo_invoke_sync(struct dubbo_args *args)
         remaining += recv_n;
     }
 
-    cli_decode_resp_frombuf(buf);
+    {
+        struct dubbo_res *res = dubbo_decode(buf);
+        if (res == NULL)
+        {
+            return false;
+        }
+
+        if (res->is_evt)
+        {
+            LOG_INFO("接收到 dubbo 事件包");
+        }
+        else if (res->data_sz)
+        {
+            // 返回 json, 不应该有 NULL 存在, 且非 NULL 结尾
+            char *json = malloc(res->data_sz + 1);
+            assert(json);
+            memcpy(json, res->data, res->data_sz);
+            json[res->data_sz] = '\0';
+
+            if (json[0] == '[' || json[0] == '{')
+            {
+                cJSON *resp = cJSON_Parse(json);
+                if (resp)
+                {
+                    if (res->ok)
+                    {
+                        printf("\x1B[1;32m%s\x1B[0m\n", cJSON_Print(resp));
+                    }
+                    else
+                    {
+                        printf("\x1B[1;31m%s\x1B[0m\n", res->desc);
+                        printf("\x1B[1;31m%s\x1B[0m\n", cJSON_Print(resp));
+                    }
+                    cJSON_Delete(resp);
+                }
+                else
+                {
+                    printf("\x1B[1;32m%s\x1B[0m\n", json);
+                }
+            }
+            else
+            {
+                printf("\x1B[1;32m%s\x1B[0m\n", json);
+            }
+            free(json);
+        }
+
+        dubbo_res_release(res);
+    }
 
 // fimxe print attach
 
