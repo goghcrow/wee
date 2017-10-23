@@ -226,7 +226,7 @@ static void cli_end(struct dubbo_client *cli)
                              ((double)cli->start.tv_sec + 1.0e-6 * cli->start.tv_usec);
         int reqs = cli->req_n - cli->req_left;
         double qps = elapsed_sec < 0.001 ? 0 : reqs / elapsed_sec;
-        fprintf(stderr, "\x1B[1;32m[SUMMARY]\x1B[0m COST %.0fs, REQ %d, SUCC %d, FAIL %d, QPS %.0f\n", elapsed_sec, reqs, cli->ok_n, cli->ko_n, qps);
+        fprintf(stderr, "\x1B[1;32m[SUMMARY]\x1B[0m COST %.2fs, REQ %d, SUCC %d, FAIL %d, QPS %.f\n", elapsed_sec, reqs, cli->ok_n, cli->ko_n, qps);
 
         cli_release(cli);
     }
