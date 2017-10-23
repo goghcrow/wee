@@ -139,9 +139,13 @@ static char *rebuild_json_args(const char *json_str)
     {
         cJSON_AddItemToArray(arr, cJSON_Duplicate(el, true));
     }
-
     cJSON_Delete(root);
-    return cJSON_PrintUnformatted(arr);
+
+    // !!!
+    char *utf8_json = cJSON_PrintUnformatted(arr);
+    char *ascii_s = utf82ascii(utf8_json);
+    free(utf8_json);
+    return ascii_s;
 }
 
 // fixme

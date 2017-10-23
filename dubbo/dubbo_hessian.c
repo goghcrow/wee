@@ -3,9 +3,67 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "dubbo_hessian.h"
 #include "../base/endian.h"
+#include "../base/buffer.h"
+#include "../base/utf8_decode.h"
+
+static const char digits[] = "0123456789abcdef";
+
+// 非法 utf8 返回 null, 正常返回 非 null 结尾 char*
+char *utf82ascii(char *s)
+{
+    struct buffer *buf = buf_create(strlen(s) * 2);
+
+    utf8_decode_init(s, strlen(s));
+    int c = utf8_decode_next();
+    while (c != UTF8_END)
+    {
+        if (c == UTF8_ERROR)
+        {
+            buf_release(buf);
+            return NULL;
+        }
+
+        if (c >= 0 && c <= 127)
+        {
+            buf_appendInt8(buf, c);
+        }
+        else
+        {
+            /* From http://en.wikipedia.org/wiki/UTF16 */
+            if (c >= 0x10000)
+            {
+                unsigned int next_c;
+                c -= 0x10000;
+                next_c = (unsigned short)((c & 0x3ff) | 0xdc00);
+                c = (unsigned short)((c >> 10) | 0xd800);
+
+                buf_append(buf, "\\u", 2);
+                buf_appendInt8(buf, digits[(c & 0xf000) >> 12]);
+                buf_appendInt8(buf, digits[(c & 0xf00) >> 8]);
+                buf_appendInt8(buf, digits[(c & 0xf0) >> 4]);
+                buf_appendInt8(buf, digits[(c & 0xf)]);
+                c = next_c;
+            }
+
+            buf_append(buf, "\\u", 2);
+            buf_appendInt8(buf, digits[(c & 0xf000) >> 12]);
+            buf_appendInt8(buf, digits[(c & 0xf00) >> 8]);
+            buf_appendInt8(buf, digits[(c & 0xf0) >> 4]);
+            buf_appendInt8(buf, digits[(c & 0xf)]);
+        }
+        c = utf8_decode_next();
+    }
+
+    char *ret = malloc(buf_readable(buf));
+    assert(ret);
+    buf_retrieveAsString(buf, buf_readable(buf), ret);
+    buf_release(buf);
+    return ret;
+}
 
 size_t utf8len(const char *s, size_t sz)
 {

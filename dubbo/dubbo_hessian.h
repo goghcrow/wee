@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <unistd.h>
 
+char *utf82ascii(char *s);
 size_t utf8len(const char *s, size_t sz);
 int utf8cpy(uint8_t *dst, const uint8_t *src, size_t sz);
 
