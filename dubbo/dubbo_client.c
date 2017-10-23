@@ -224,7 +224,8 @@ static void cli_end(struct dubbo_client *cli)
 
         double elapsed_sec = (cli->end.tv_sec - cli->start.tv_sec) + (cli->end.tv_usec - cli->start.tv_usec) / 1000000;
         int reqs = cli->req_n - cli->req_left;
-        fprintf(stderr, "\x1B[1;32m[SUMMARY]\x1B[0m COST %.0fs, REQ %d, SUCC %d, FAIL %d, QPS %.0f\n", elapsed_sec, reqs, cli->ok_n, cli->ko_n, reqs / elapsed_sec);
+        double qps = elapsed_sec < 0.001 ? 0 : reqs / elapsed_sec;
+        fprintf(stderr, "\x1B[1;32m[SUMMARY]\x1B[0m COST %.0fs, REQ %d, SUCC %d, FAIL %d, QPS %.0f\n", elapsed_sec, reqs, cli->ok_n, cli->ko_n, qps);
 
         cli_release(cli);
     }
@@ -396,7 +397,8 @@ static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask)
     cli->pipe_left++;
     cli->req_left--;
 
-    if (((cli->req_n - cli->req_left) % 1000) == 0) {
+    if (((cli->req_n - cli->req_left) % 1000) == 0)
+    {
         fprintf(stderr, "已发送请求 %d\n", cli->req_n - cli->req_left);
     }
 
@@ -480,6 +482,10 @@ static bool cli_decode_resp(struct dubbo_client *cli)
                 }
             }
             free(json);
+        }
+        else if (res->data_sz == 0)
+        {
+            printf("<res seq=%" PRId64 "> [\x1B[1;32mSUCC\x1B[0m] NULL\n", res->reqid);
         }
     }
 
@@ -627,6 +633,10 @@ bool dubbo_invoke_sync(struct dubbo_args *args)
                 printf("\x1B[1;32m%s\x1B[0m\n", json);
             }
             free(json);
+        }
+        else if (res->data_sz == 0)
+        {
+            printf("\x1B[1;32m%s\x1B[0m\n", "NULL");
         }
 
         dubbo_res_release(res);
