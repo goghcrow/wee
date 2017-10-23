@@ -191,6 +191,7 @@ void int_handler(int dummy)
     if (g_cli && g_cli->run)
     {
         cli_end(g_cli);
+        exit(0);
     }
 }
 
@@ -342,10 +343,6 @@ static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask)
 
     struct dubbo_client *cli = (struct dubbo_client *)ud;
     assert(cli->connected);
-    if (!cli->run)
-    {
-        return;
-    }
 
     if (!cli_write(cli))
     {
@@ -360,11 +357,6 @@ static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask)
 
     struct dubbo_client *cli = (struct dubbo_client *)ud;
     assert(cli->connected);
-
-    if (!cli->run)
-    {
-        return;
-    }
 
     for (;;)
     {
