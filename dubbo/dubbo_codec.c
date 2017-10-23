@@ -133,20 +133,13 @@ static char *rebuild_json_args(const char *json_str)
         return NULL;
     }
 
-    // cJSON *obj = cJSON_CreateObject();
     cJSON *arr = cJSON_CreateArray();
-    // int i = 0;
-    char buf[10];
-    memset(buf, 0, sizeof(buf));
-
     cJSON *el;
     cJSON_ArrayForEach(el, root)
     {
-        // sprintf(buf, "arg%d", i++);
-        // cJSON_AddItemToObject(obj, buf, cJSON_Duplicate(el, true));
         cJSON_AddItemToArray(arr, cJSON_Duplicate(el, true));
     }
-
+    
     cJSON_Delete(root);
     return cJSON_PrintUnformatted(arr);
 }
