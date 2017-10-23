@@ -341,6 +341,12 @@ static void cli_on_write(struct aeEventLoop *el, int fd, void *ud, int mask)
     UNUSED(mask);
 
     struct dubbo_client *cli = (struct dubbo_client *)ud;
+    assert(cli->connected);
+    if (!cli->run)
+    {
+        return;
+    }
+
     if (!cli_write(cli))
     {
         cli_reconnect(cli);
@@ -354,6 +360,11 @@ static void cli_on_read(struct aeEventLoop *el, int fd, void *ud, int mask)
 
     struct dubbo_client *cli = (struct dubbo_client *)ud;
     assert(cli->connected);
+
+    if (!cli->run)
+    {
+        return;
+    }
 
     for (;;)
     {
