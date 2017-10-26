@@ -2,5 +2,6 @@
 *.dSYM
 php-ext
 dubbo_ab
+.DS_Store
 */.DS_Store
 lua*
