@@ -3,8 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
-#include "../base/endian.h"
-#include "../base/buffer.h"
+#include "endian.h"
+#include "buffer.h"
 #include "codec.h"
 
 struct nova_hdr;

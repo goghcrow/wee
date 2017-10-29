@@ -6,9 +6,9 @@
 #include <assert.h>
 
 #include "dubbo_hessian.h"
-#include "../base/endian.h"
-#include "../base/buffer.h"
-#include "../base/utf8_decode.h"
+#include "endian.h"
+#include "buffer.h"
+#include "utf8_decode.h"
 
 static const char digits[] = "0123456789abcdef";
 

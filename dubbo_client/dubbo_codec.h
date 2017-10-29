@@ -2,7 +2,7 @@
 #define DUBBO_CODEC_H
 
 #include <stdbool.h>
-#include "../base/buffer.h"
+#include "buffer.h"
 
 // dubbo 泛化调用 codec
 

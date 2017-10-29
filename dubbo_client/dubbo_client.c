@@ -14,12 +14,12 @@
 #include "dubbo_codec.h"
 #include "dubbo_client.h"
 
-#include "../ae/ae.h"
-#include "../net/socket.h"
-#include "../net/sa.h"
-#include "../base/buffer.h"
-#include "../base/cJSON.h"
-#include "../base/dbg.h"
+#include "ae.h"
+#include "socket.h"
+#include "sa.h"
+#include "buffer.h"
+#include "cJSON.h"
+#include "dbg.h"
 
 #define CLI_INIT_BUF_SZ 1024
 

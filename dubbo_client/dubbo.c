@@ -9,9 +9,9 @@
 #include <inttypes.h>
 
 #include "dubbo_client.h"
-#include "../base/cJSON.h"
-#include "../base/dbg.h"
-#include "../ae/ae.h"
+#include "cJSON.h"
+#include "dbg.h"
+#include "ae.h"
 
 extern char *optarg;
 static const char *optString = "h:p:m:a:e:t:c:n:v?";

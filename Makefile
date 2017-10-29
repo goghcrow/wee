@@ -1,7 +1,6 @@
-# all: clean novadump table_test sniff_test cloure_test server_test sa_test socket_test buffer_test poll_test threadpool_test queue_test mq_test mq_ts_test
+# all:
 
-# novadump: nova/novadump.c net/sniff.c base/buffer.c nova/Nova.c nova/BinaryData.c
-	# $(CC) -std=c99 -g -Wall -lpcap -o $@ $^
+.PHONY: nova dubbo
 
 table_test: base/table_test.c base/table.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
@@ -58,18 +57,26 @@ chan_test: base/mtxlock.c base/cond.c base/mq.c base/chan.c base/chan_test.c
 hs_test: dubbo/hessian.c dubbo/hessian_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-dubbo_debug: base/utf8_decode.c base/cJSON.c base/buffer.c base/dbg.c net/socket.c net/sa.c ae/ae.c dubbo/dubbo_hessian.c dubbo/dubbo_codec.c dubbo/dubbo_client.c dubbo/dubbo.c
-	$(CC) -fsanitize=address -fno-omit-frame-pointer -D_GNU_SOURCE -std=gnu99 -g3 -O0 -Wall -o $@ $^
-
-dubbo_test: base/utf8_decode.c base/cJSON.c base/buffer.c base/dbg.c net/socket.c net/sa.c ae/ae.c dubbo/dubbo_hessian.c dubbo/dubbo_codec.c dubbo/dubbo_client.c dubbo/dubbo.c
-	$(CC) -D_GNU_SOURCE -std=gnu99 -g -Wall -o $@ $^
-
 ae_test: ae/anet.c ae/ae.c ae/ae_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
+dubbo_debug: base/utf8_decode.c base/cJSON.c base/buffer.c base/dbg.c net/socket.c net/sa.c 3rd/ae/ae.c dubbo_client/dubbo_hessian.c dubbo_client/dubbo_codec.c dubbo_client/dubbo_client.c dubbo_client/dubbo.c
+	$(CC)  -I3rd/ae -Ibase -Inet -fsanitize=address -fno-omit-frame-pointer -D_GNU_SOURCE -std=gnu99 -g3 -O0 -Wall -o $@ $^
+
+dubbo: base/utf8_decode.c base/cJSON.c base/buffer.c base/dbg.c net/socket.c net/sa.c 3rd/ae/ae.c dubbo_client/dubbo_hessian.c dubbo_client/dubbo_codec.c dubbo_client/dubbo_client.c dubbo_client/dubbo.c
+	$(CC) -I3rd/ae -Ibase -Inet -D_GNU_SOURCE -std=gnu99 -g -Wall -o $@ $^
+
+nova: nova_client/nova.c nova_client/codec.c nova_client/generic.c base/cJSON.c base/buffer.c net/socket.c
+	$(CC) -Ibase -Inet -std=c99 -D_GNU_SOURCE -g -Wall -o $@ $^
+
+novadump-dev: nova_client/novadump.c nova_client/codec.c base/buffer.c net/sniff.c
+	$(CC) -Ibase -Inet -std=c99 -D_GNU_SOURCE -D_BSD_SOURCE -D__USE_BSD -D__FAVOR_BSD -lpcap -g -O0 -Wall -o $@ $^
+
+novadump: novadump.c codec.c ../base/buffer.c ../net/sniff.c
+	$(CC) -Ibase -Inet -std=c99 -D_GNU_SOURCE -D_BSD_SOURCE -D__USE_BSD -D__FAVOR_BSD -DNDEBUG -lpcap -O3 -Wall -o $@ $^
+
 clean:
 	-/bin/rm -f a.out
-	-/bin/rm -f novadump
 	-/bin/rm -f table_test
 	-/bin/rm -f sniff_test
 	-/bin/rm -f cloure_test
@@ -88,7 +95,10 @@ clean:
 	-/bin/rm -f waitgroup_test
 	-/bin/rm -f chan_test
 	-/bin/rm -f hs_test
-	-/bin/rm -f dubbo_debug
-	-/bin/rm -f dubbo_test
 	-/bin/rm -f ae_test
+	-/bin/rm -f dubbo_debug
+	-/bin/rm -f dubbo
+	-/bin/rm -f nova
+	-/bin/rm -f novadump
+	-/bin/rm -f novadump-dev
 	-/bin/rm -rf *.dSYM

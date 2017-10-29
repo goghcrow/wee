@@ -4,9 +4,9 @@
 #include <string.h>
 #include <assert.h>
 
-#include "../net/sniff.h"
-#include "../base/buffer.h"
-#include "../base/queue.h"
+#include "sniff.h"
+#include "buffer.h"
+#include "queue.h"
 #include "codec.h"
 
 struct conn

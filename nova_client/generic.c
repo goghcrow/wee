@@ -6,7 +6,7 @@
 #include <assert.h>
 #include "generic.h"
 #include "codec.h"
-#include "../base/buffer.h"
+#include "buffer.h"
 
 #define GENERIC_SERVICE "com.youzan.nova.framework.generic.service.GenericService"
 #define GENERIC_SERVICE_LEN 56

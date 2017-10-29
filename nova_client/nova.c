@@ -10,11 +10,11 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <inttypes.h>
-#include "../base/cJSON.h"
+#include "cJSON.h"
 #include "generic.h"
 #include "codec.h"
-#include "../net/socket.h"
-#include "../base/buffer.h"
+#include "socket.h"
+#include "buffer.h"
 
 extern char *optarg;
 

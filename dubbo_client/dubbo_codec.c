@@ -5,10 +5,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "../base/endian.h"
-#include "../base/buffer.h"
-#include "../base/cJSON.h"
-#include "../base/dbg.h"
+#include "endian.h"
+#include "buffer.h"
+#include "cJSON.h"
+#include "dbg.h"
 
 #include "dubbo_codec.h"
 #include "dubbo_hessian.h"
