@@ -1,7 +1,8 @@
 .vscode
 *.dSYM
-php-ext
+php/php-tcpsniff/.git
 dubbo_ab
 .DS_Store
 */.DS_Store
 lua*
+tmp
