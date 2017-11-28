@@ -75,6 +75,9 @@ novadump-dev: nova_client/novadump.c nova_client/codec.c base/buffer.c net/sniff
 novadump: novadump.c codec.c ../base/buffer.c ../net/sniff.c
 	$(CC) -Ibase -Inet -std=c99 -D_GNU_SOURCE -D_BSD_SOURCE -D__USE_BSD -D__FAVOR_BSD -DNDEBUG -lpcap -O3 -Wall -o $@ $^
 
+mysql_sniff: net/sniff.c base/buffer.c mysql/mysql_sniff.c
+	$(CC) -Wunused-function -std=c99 -g3 -O0 -Wall -lpcap -o $@ $^
+
 clean:
 	-/bin/rm -f a.out
 	-/bin/rm -f table_test
@@ -101,4 +104,5 @@ clean:
 	-/bin/rm -f nova
 	-/bin/rm -f novadump
 	-/bin/rm -f novadump-dev
+	-/bin/rm -f mysql_sniff
 	-/bin/rm -rf *.dSYM

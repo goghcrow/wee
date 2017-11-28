@@ -197,6 +197,10 @@ mysql_dissect_compressed_header(struct buffer *buf)
     int32_t cmp_pkt_sz = buf_readInt32LE24(buf);
     uint8_t cmp_pkt_num = buf_readInt8(buf);
     int32_t cmp_pkt_uncmp_sz = buf_readInt32LE24(buf);
+
+    UNUSED(cmp_pkt_sz);
+    UNUSED(cmp_pkt_num);
+    UNUSED(cmp_pkt_uncmp_sz);
 }
 
 // TOOD 未处理 compressed header
@@ -228,11 +232,6 @@ void pkt_handle(void *ud,
     //     // print_bytes((char *)payload, payload_size);
     // }
 
-    // if ((tcp_hdr->th_flags & TH_FIN) || (tcp_hdr->th_flags & TH_RST))
-    // {
-    //     // close
-    // }
-
     // char ip_buf[INET_ADDRSTRLEN];
 
     // printf("+-------------------------+\n");
@@ -254,6 +253,15 @@ void pkt_handle(void *ud,
     // 连接关闭, 清理数据
     if (tcp_hdr->th_flags & TH_FIN || tcp_hdr->th_flags & TH_RST)
     {
+        char s_ip_buf[INET_ADDRSTRLEN];
+        char d_ip_buf[INET_ADDRSTRLEN];
+        // uint32_t d_ip = ip_hdr->ip_dst.s_addr;
+        uint16_t d_port = ntohs(tcp_hdr->th_dport);
+
+        inet_ntop(AF_INET, &(ip_hdr->ip_src.s_addr), s_ip_buf, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &(ip_hdr->ip_dst.s_addr), d_ip_buf, INET_ADDRSTRLEN);
+
+        LOG_INFO("%s:%d %s:%d 关闭连接\n", s_ip_buf, s_port, d_ip_buf, d_port);
         c = pq_del(s_ip, s_port);
         if (c)
         {
@@ -294,6 +302,9 @@ void pkt_handle(void *ud,
     
     int32_t pkt_sz = buf_readInt32LE24(buf);
     uint8_t pkt_id = buf_readInt8(buf); 
+
+    LOG_INFO("packet size %d\n", pkt_sz);
+    LOG_INFO("packet id %d\n", pkt_id);
    
     // TODO 检测是否是 SSL !!!
 
@@ -329,8 +340,11 @@ int main(int argc, char **argv)
         .timeout_limit = 10,
         // .device = device,
         .device = "lo0",
-        .filter_exp = "tcp and ip port 3306",
+        .filter_exp = "tcp and port 3306",
         .ud = NULL};
+
+
+    pq_init();
 
     if (!tcpsniff(&opt, pkt_handle))
     {

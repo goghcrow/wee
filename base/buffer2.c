@@ -74,7 +74,7 @@ size_t buf_writable(const struct buffer *buf)
     return buf->buf + buf->sz - buf->write_idx;
 }
 
-size_t buf_prependable(struct buffer *buf)
+size_t buf_prependable(const struct buffer *buf)
 {
     return buf->read_idx - buf->buf;
 }
