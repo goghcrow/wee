@@ -106,6 +106,16 @@ void buf_unwrite(struct buffer *buf, size_t len)
     buf->write_idx -= len;
 }
 
+const char *buf_findStr(struct buffer *buf, char *str)
+{
+    return (char *)memmem(buf_peek(buf), buf_readable(buf), str, strlen(str));
+}
+
+const char *buf_findChar(struct buffer *buf, char c)
+{
+    return (char *)memchr(buf_peek(buf), c, buf_readable(buf));
+}
+
 const char *buf_findCRLF(struct buffer *buf)
 {
     return (char *)memmem(buf_peek(buf), buf_readable(buf), "\r\n", 2);
@@ -253,6 +263,24 @@ void buf_appendInt8(struct buffer *buf, int8_t x)
     buf_append(buf, (char *)&x, sizeof(int8_t));
 }
 
+void buf_appendInt64LE(struct buffer *buf, int64_t x)
+{
+    int64_t le64 = htole64(x);
+    buf_append(buf, (char *)&le64, sizeof(int64_t));
+}
+
+void buf_appendInt32LE(struct buffer *buf, int32_t x)
+{
+    int32_t le32 = htole32(x);
+    buf_append(buf, (char *)&le32, sizeof(int32_t));
+}
+
+void buf_appendInt16LE(struct buffer *buf, int16_t x)
+{
+    int16_t le16 = htole16(x);
+    buf_append(buf, (char *)&le16, sizeof(int16_t));
+}
+
 void buf_prependInt64(struct buffer *buf, int64_t x)
 {
     int64_t be64 = htobe64(x);
@@ -274,6 +302,24 @@ void buf_prependInt16(struct buffer *buf, int16_t x)
 void buf_prependInt8(struct buffer *buf, int8_t x)
 {
     buf_prepend(buf, (char *)&x, sizeof(int8_t));
+}
+
+void buf_prependInt64LE(struct buffer *buf, int64_t x)
+{
+    int64_t le64 = htole64(x);
+    buf_prepend(buf, (char *)&le64, sizeof(int64_t));
+}
+
+void buf_prependInt32LE(struct buffer *buf, int32_t x)
+{
+    int32_t le32 = htole32(x);
+    buf_prepend(buf, (char *)&le32, sizeof(int32_t));
+}
+
+void buf_prependInt16LE(struct buffer *buf, int16_t x)
+{
+    int16_t le16 = htole16(x);
+    buf_prepend(buf, (char *)&le16, sizeof(int16_t));
 }
 
 int64_t buf_peekInt64(const struct buffer *buf)
@@ -306,6 +352,38 @@ int8_t buf_peekInt8(const struct buffer *buf)
     return *buf_peek(buf);
 }
 
+int64_t buf_peekInt64LE(const struct buffer *buf)
+{
+    assert(buf_readable(buf) >= sizeof(int64_t));
+    int64_t le64 = 0;
+    memcpy(&le64, buf_peek(buf), sizeof(int64_t));
+    return le64toh(le64);
+}
+
+int32_t buf_peekInt32LE(const struct buffer *buf)
+{
+    assert(buf_readable(buf) >= sizeof(int32_t));
+    int32_t le32 = 0;
+    memcpy(&le32, buf_peek(buf), sizeof(int32_t));
+    return le32toh(le32);
+}
+
+int32_t buf_peekInt32LE24(const struct buffer *buf)
+{
+    assert(buf_readable(buf) >= 3);
+    int32_t le32 = 0x00000000; /* 0x000000{00 小端高位未使用} */
+    memcpy(&le32, buf_peek(buf), 3);
+    return le32toh(le32);
+}
+
+int16_t buf_peekInt16LE(const struct buffer *buf)
+{
+    assert(buf_readable(buf) >= sizeof(int16_t));
+    int16_t le16 = 0;
+    memcpy(&le16, buf_peek(buf), sizeof(int16_t));
+    return le16toh(le16);
+}
+
 int64_t buf_readInt64(struct buffer *buf)
 {
     int64_t x = buf_peekInt64(buf);
@@ -332,6 +410,78 @@ int8_t buf_readInt8(struct buffer *buf)
     int8_t x = buf_peekInt8(buf);
     buf_retrieveInt8(buf);
     return x;
+}
+
+int64_t buf_readInt64LE(struct buffer *buf)
+{
+    int64_t x = buf_peekInt64LE(buf);
+    buf_retrieveInt64(buf);
+    return x;
+}
+
+int32_t buf_readInt32LE(struct buffer *buf)
+{
+    int32_t x = buf_peekInt32LE(buf);
+    buf_retrieveInt32(buf);
+    return x;
+}
+
+int32_t buf_readInt32LE24(struct buffer *buf)
+{
+    int32_t x = buf_peekInt32LE24(buf);
+    buf_retrieve(buf, 3);
+    return x;
+}
+
+int16_t buf_readInt16LE(struct buffer *buf)
+{
+    int16_t x = buf_peekInt16LE(buf);
+    buf_retrieveInt16(buf);
+    return x;
+}
+
+// 读取 null 结尾 str 一般长度比较短, 这里内部直接申请内存了
+// 外部负责释放
+char *buf_readCStr(struct buffer *buf)
+{
+    const char *eos = buf_findChar(buf, '\0');
+    if (eos == NULL)
+    {
+        return NULL;
+    }
+
+    int sz = eos - buf_peek(buf) + 1;
+    char *str = malloc(sz);
+    if (str == NULL)
+    {
+        return NULL;
+    }
+
+    memcpy(str, buf_peek(buf), sz);
+    buf_retrieve(buf, sz);
+    return str;
+}
+
+// 外部负责释放
+char *buf_readStr(struct buffer *buf, int sz)
+{
+    if (sz <= 0)
+    {
+        return NULL;
+    }
+
+    assert(buf_readable(buf) >= sz);
+    char *str = malloc(sz + 1);
+    if (str == NULL)
+    {
+        return NULL;
+    }
+
+    memcpy(str, buf_peek(buf), sz);
+    str[sz] = '\0';
+
+    buf_retrieve(buf, sz);
+    return str;
 }
 
 size_t buf_internalCapacity(struct buffer *buf)

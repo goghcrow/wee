@@ -5,8 +5,8 @@
 table_test: base/table_test.c base/table.c
 	$(CC) -std=c99 -g -Wall -o $@ $^
 
-sniff_test: net/sniff_test.c net/sniff.c
-	$(CC) -std=c99 -g -Wall -lpcap -o $@ $^
+sniff_test: net/sniff_test.c net/sniff.c base/buffer.c
+	$(CC) -std=c99 -g3 -O0 -Wall -lpcap -o $@ $^
 
 cloure_test: base/closure_test.c
 	$(CC) -std=c99 -g -Wall -o $@ $^

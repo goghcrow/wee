@@ -176,17 +176,65 @@ void test12()
     assert(save_idx == buf_prependable(buf));
     // 暂时跳过2字节
     buf_setWriteIndex(buf, save_idx + 2);
-    
-    char * hello = "HELLO";
-    char * x = "::";
-    
+
+    char *hello = "HELLO";
+    char *x = "::";
+
     buf_append(buf, hello, strlen(hello));
     size_t save_idx2 = buf_getWriteIndex(buf);
     buf_setWriteIndex(buf, save_idx);
     buf_append(buf, x, 2);
     buf_setWriteIndex(buf, save_idx2);
-    
+
     printf("%7s\n", buf_peek(buf));
+    buf_release(buf);
+}
+
+void test13()
+{
+    struct buffer *buf = buf_create(10);
+    buf_append(buf, "hello\0", 6);
+    const char *c = buf_findChar(buf, '\0');
+    assert(c - buf_peek(buf) == 5);
+    assert(buf_findChar(buf, 'a') == NULL);
+    assert((buf_findStr(buf, "lo") - buf_peek(buf)) == 3);
+    assert(buf_findStr(buf, "xx") == NULL);
+    buf_release(buf);
+}
+
+void test14()
+{
+    struct buffer *buf = buf_create(10);
+    buf_appendInt16LE(buf, 1024);
+    assert(buf_readInt16LE(buf) == 1024);
+    buf_appendInt32LE(buf, 1024);
+    assert(buf_readInt32LE(buf) == 1024);
+    buf_appendInt64LE(buf, 1024);
+    assert(buf_readInt64LE(buf) == 1024);
+
+    buf_prependInt16LE(buf, 1024);
+    assert(buf_readInt16LE(buf) == 1024);
+    buf_prependInt32LE(buf, 1024);
+    assert(buf_readInt32LE(buf) == 1024);
+    buf_prependInt64LE(buf, 1024);
+    assert(buf_readInt64LE(buf) == 1024);
+    buf_release(buf);
+}
+
+void test15()
+{
+    struct buffer *buf = buf_create(10);
+
+    buf_append(buf, "HELLO\0", 6);
+    char *str = buf_readCStr(buf);
+    assert(str);
+    assert(strcmp("HELLO\0", str) == 0);
+    assert(buf_readable(buf) == 0);
+
+    buf_append(buf, "HELLO", 5);
+    str = buf_readCStr(buf);
+    assert(str == NULL);
+
     buf_release(buf);
 }
 
@@ -204,5 +252,8 @@ int main(void)
     test10();
     test11();
     test12();
+    test13();
+    test14();
+    test15();
     return 0;
 }
