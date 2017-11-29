@@ -233,7 +233,7 @@ void test15()
 
     buf_append(buf, "HELLO", 5);
     str = buf_readCStr(buf);
-    assert(str == NULL);
+    assert(buf_readable(buf) == 0);
 
     buf_release(buf);
 }

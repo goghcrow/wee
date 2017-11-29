@@ -2,6 +2,20 @@
 #define MYSQL_SNIFF_H
 
 #include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+
+#define LOG_INFO(fmt, ...) \
+    fprintf(stderr, "\x1B[1;32m[INFO] " fmt "\x1B[0m\n", ##__VA_ARGS__);
+
+#define LOG_ERROR(fmt, ...) \
+    fprintf(stderr, "\x1B[1;31m[ERROR] " fmt "\x1B[0m\n", ##__VA_ARGS__);
+
+#define PANIC(fmt, ...)                                                                                                     \
+    fprintf(stderr, "\x1B[1;31m[PANIC] " fmt "\x1B[0m in function %s %s:%d\n", ##__VA_ARGS__, __func__, __FILE__, __LINE__); \
+    exit(1);
+
+
 
 #define MYSQL_MAX_PACKET_LEN  	0xFFFFFF
 #define MYSQL_ERRMSG_SIZE 		512
@@ -132,6 +146,57 @@
 #define MYSQL_COMPRESS_NONE   0
 #define MYSQL_COMPRESS_INIT   1
 #define MYSQL_COMPRESS_ACTIVE 2
+
+struct val_str {
+    uint32_t      val;
+    const char	  *str;
+};
+
+/* decoding table: command */
+const struct val_str mysql_command_vals[] = {
+	{MYSQL_SLEEP,   "SLEEP"},
+	{MYSQL_QUIT,   "Quit"},
+	{MYSQL_INIT_DB,  "Use Database"},
+	{MYSQL_QUERY,   "Query"},
+	{MYSQL_FIELD_LIST, "Show Fields"},
+	{MYSQL_CREATE_DB,  "Create Database"},
+	{MYSQL_DROP_DB , "Drop Database"},
+	{MYSQL_REFRESH , "Refresh"},
+	{MYSQL_SHUTDOWN , "Shutdown"},
+	{MYSQL_STATISTICS , "Statistics"},
+	{MYSQL_PROCESS_INFO , "Process List"},
+	{MYSQL_CONNECT , "Connect"},
+	{MYSQL_PROCESS_KILL , "Kill Server Thread"},
+	{MYSQL_DEBUG , "Dump Debuginfo"},
+	{MYSQL_PING , "Ping"},
+	{MYSQL_TIME , "Time"},
+	{MYSQL_DELAY_INSERT , "Insert Delayed"},
+	{MYSQL_CHANGE_USER , "Change User"},
+	{MYSQL_BINLOG_DUMP , "Send Binlog"},
+	{MYSQL_TABLE_DUMP, "Send Table"},
+	{MYSQL_CONNECT_OUT, "Slave Connect"},
+	{MYSQL_REGISTER_SLAVE, "Register Slave"},
+	{MYSQL_STMT_PREPARE, "Prepare Statement"},
+	{MYSQL_STMT_EXECUTE, "Execute Statement"},
+	{MYSQL_STMT_SEND_LONG_DATA, "Send BLOB"},
+	{MYSQL_STMT_CLOSE, "Close Statement"},
+	{MYSQL_STMT_RESET, "Reset Statement"},
+	{MYSQL_SET_OPTION, "Set Option"},
+	{MYSQL_STMT_FETCH, "Fetch Data"},
+	{0, NULL}
+};
+
+const char* val_to_str(uint32_t val, char *def)
+{
+	struct val_str *p = (struct val_str *)mysql_command_vals - 1;
+	while((++p)->str) {
+		if (p->val == val) {
+			return p->str;
+		}
+	}
+	return def;
+}
+
 
 
 typedef enum mysql_state {

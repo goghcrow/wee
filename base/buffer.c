@@ -447,11 +447,11 @@ char *buf_readCStr(struct buffer *buf)
     const char *eos = buf_findChar(buf, '\0');
     if (eos == NULL)
     {
-        return NULL;
+        eos = buf_peek(buf) + buf_readable(buf) - 1;
     }
 
     int sz = eos - buf_peek(buf) + 1;
-    char *str = malloc(sz);
+    char *str = calloc(sz, 1);
     if (str == NULL)
     {
         return NULL;
