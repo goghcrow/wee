@@ -185,6 +185,7 @@ static void mysql_dissect_result_header(struct buffer *buf, mysql_conn_data_t *c
 static void mysql_dissect_ok_packet(struct buffer *buf, mysql_conn_data_t *conn_data);
 static void mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data);
 static int mysql_dissect_session_tracker_entry(struct buffer *buf);
+static void mysql_dissect_row_packet(struct buffer *buf);
 
 void pkt_handle(void *ud,
                 const struct pcap_pkthdr *pkt_hdr,
@@ -208,8 +209,8 @@ void pkt_handle(void *ud,
     inet_ntop(AF_INET, &(ip_hdr->ip_src.s_addr), s_ip_buf, INET_ADDRSTRLEN);
     inet_ntop(AF_INET, &(ip_hdr->ip_dst.s_addr), d_ip_buf, INET_ADDRSTRLEN);
 
-    printf("%s:%d > %s:%d ack %u seq %u\n", s_ip_buf, s_port, d_ip_buf, d_port,
-           ntohl(tcp_hdr->th_ack), ntohl(tcp_hdr->th_seq));
+    printf("%s:%d > %s:%d ack %u, seq %u, sz %zd\n", s_ip_buf, s_port, d_ip_buf, d_port,
+           ntohl(tcp_hdr->th_ack), ntohl(tcp_hdr->th_seq), payload_size);
 
     // 连接关闭, 清理数据
     if (tcp_hdr->th_flags & TH_FIN || tcp_hdr->th_flags & TH_RST)
@@ -260,7 +261,7 @@ void pkt_handle(void *ud,
 
         // 这里为简化逻辑处理, 每个 Mysql Packet 使用单独 buffer 对象, Copy 一份数据
         // 对于处理不了的 packet 可以直接忽略处理~ 不影响后续包
-        
+
         // 重置 once_pkt_buf, 从 buf 转义数据到 once_pkt_buf
         buf_retrieveAll(once_pkt_buf);
         buf_append(once_pkt_buf, buf_peek(buf), pkt_sz);
@@ -541,7 +542,8 @@ buf_readFleStr(struct buffer *buf, char *str, int sz)
 {
     uint64_t len;
     uint64_t sz1 = buf_readFle(buf, &len, NULL);
-    if (sz1 > sz) {
+    if (sz1 > sz)
+    {
         assert(false);
         return -1;
     }
@@ -883,7 +885,7 @@ mysql_dissect_attributes(struct buffer *buf)
 
     char *mysql_connattrs_name = NULL;
     char *mysql_connattrs_value = NULL;
-    
+
     int name_len = buf_dupFleStr(buf, &mysql_connattrs_name);
     int val_len = buf_dupFleStr(buf, &mysql_connattrs_value);
     LOG_INFO("Client Attributes %s %s", mysql_connattrs_name, mysql_connattrs_value);
@@ -1172,40 +1174,53 @@ mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data)
         mysql_set_conn_state(conn_data, REQUEST);
     }
     else if (response_code == 0xfe && buf_readable(buf) < 9)
-    { // EOF
-        // uint8_t mysql_eof = buf_readInt8(buf);
+    { // EOF  !!! < 9
+        uint8_t mysql_eof = buf_readInt8(buf);
+        LOG_INFO("EOF Marker 0x%02x", mysql_eof);
 
-        // /* pre-4.1 packet ends here */
-        // if (buf_readable(buf)) {
-        // 	uint16_t mysql_num_warn = buf_readInt16LE(buf);
-        // 	server_status = buf_readInt16LE(buf);
-        // }
+        /* pre-4.1 packet ends here */
+        if (buf_readable(buf))
+        {
+            uint16_t warn_num = buf_readInt16LE(buf);
+            server_status = buf_readInt16LE(buf);
+            LOG_INFO("Warnings %d", warn_num);
+            LOG_INFO("Server Status 0x%04x", server_status);
+        }
 
-        // switch (conn_data->state) {
-        // case FIELD_PACKET:
-        // 	mysql_set_conn_state(conn_data, ROW_PACKET);
-        // 	break;
-        // case ROW_PACKET:
-        // 	if (server_status & MYSQL_STAT_MU) {
-        // 		mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
-        // 	} else {
-        // 		mysql_set_conn_state(conn_data, REQUEST);
-        // 	}
-        // 	break;
-        // case PREPARED_PARAMETERS:
-        // 	if (conn_data->stmt_num_fields > 0) {
-        // 		mysql_set_conn_state(conn_data, PREPARED_FIELDS);
-        // 	} else {
-        // 		mysql_set_conn_state(conn_data, REQUEST);
-        // 	}
-        // 	break;
-        // case PREPARED_FIELDS:
-        // 	mysql_set_conn_state(conn_data, REQUEST);
-        // 	break;
-        // default:
-        // 	/* This should be an unreachable case */
-        // 	mysql_set_conn_state(conn_data, REQUEST);
-        // }
+        switch (conn_data->state)
+        {
+        case FIELD_PACKET:
+            // 解析完 字段元信息, 继续解析 具体 Row
+            mysql_set_conn_state(conn_data, ROW_PACKET);
+            break;
+        case ROW_PACKET:
+            // 解析完 RowPacket 决定继续解析 还是等待 Request
+            if (server_status & MYSQL_STAT_MU)
+            {
+                mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
+            }
+            else
+            {
+                mysql_set_conn_state(conn_data, REQUEST);
+            }
+            break;
+        case PREPARED_PARAMETERS:
+            if (conn_data->stmt_num_fields > 0)
+            {
+                mysql_set_conn_state(conn_data, PREPARED_FIELDS);
+            }
+            else
+            {
+                mysql_set_conn_state(conn_data, REQUEST);
+            }
+            break;
+        case PREPARED_FIELDS:
+            mysql_set_conn_state(conn_data, REQUEST);
+            break;
+        default:
+            /* This should be an unreachable case */
+            mysql_set_conn_state(conn_data, REQUEST);
+        }
     }
     else if (response_code == 0x00)
     { // OK
@@ -1234,10 +1249,8 @@ mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data)
         switch (conn_data->state)
         {
         case RESPONSE_MESSAGE:
-            // if ((lenstr = tvb_reported_length_remaining(tvb, offset))) {
-            // 	proto_tree_add_item(tree, hf_mysql_message, tvb, offset, lenstr, ENC_ASCII|ENC_NA);
-            // 	offset += lenstr;
-            // }
+            buf_readStr(buf, g_buf, BUFSZ); // 读取所有
+            LOG_INFO("Message %s", g_buf);
             mysql_set_conn_state(conn_data, REQUEST);
             break;
 
@@ -1254,7 +1267,7 @@ mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data)
             break;
 
         case ROW_PACKET:
-            // offset = mysql_dissect_row_packet(tvb, offset, tree);
+            mysql_dissect_row_packet(buf);
             break;
 
         case PREPARED_FIELDS:
@@ -1372,26 +1385,26 @@ mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
     char *str;
     buf_readFleStr(buf, g_buf, BUFSZ);
     LOG_INFO("Catalog %s", g_buf);
-    
+
     buf_readFleStr(buf, g_buf, BUFSZ);
     LOG_INFO("Database %s", g_buf);
-    
+
     buf_readFleStr(buf, g_buf, BUFSZ);
     LOG_INFO("Table %s", g_buf);
-    
+
     buf_readFleStr(buf, g_buf, BUFSZ);
     LOG_INFO("Original Table %s", g_buf);
-    
+
     buf_readFleStr(buf, g_buf, BUFSZ);
     LOG_INFO("Name %s", g_buf);
-    
+
     buf_readFleStr(buf, g_buf, BUFSZ);
     LOG_INFO("Orginal Name %s", g_buf);
-    
+
     buf_retrieve(buf, 1);
 
     uint16_t charset = buf_readInt16LE(buf); // TODO fmt charset
-    uint32_t length = buf_readInt32LE(buf); 
+    uint32_t length = buf_readInt32LE(buf);
     uint8_t type = buf_readInt8(buf); // TODO fmt type name
     uint16_t flags = buf_readInt16LE(buf);
     uint8_t decimal = buf_readInt8(buf);
@@ -1404,7 +1417,8 @@ mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
     buf_retrieve(buf, 2);
 
     /* default (Only use for show fields) */
-    if (buf_readable(buf)) {
+    if (buf_readable(buf))
+    {
         buf_readFleStr(buf, g_buf, BUFSZ);
         LOG_INFO("Default %s", g_buf);
     }
@@ -1451,4 +1465,22 @@ mysql_dissect_session_tracker_entry(struct buffer *buf)
     }
 
     return sz;
+}
+
+static void
+mysql_dissect_row_packet(struct buffer *buf)
+{
+    while (buf_readable(buf))
+    {
+        uint8_t is_null;
+        uint64_t lelen = buf_readFle(buf, NULL, &is_null);
+        if (is_null) {
+            LOG_INFO("NULL");
+        }
+        else
+        {
+            buf_readStr(buf, g_buf, lelen);
+            LOG_INFO("Text: %s", g_buf);
+        }
+    }
 }
