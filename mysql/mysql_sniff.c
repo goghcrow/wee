@@ -165,9 +165,9 @@ void pq_add(struct conn *c)
 
 // malloc free 全部修改为 栈内存.... 反正不需要保存, 直接打印到控制台好了
 static int buf_strsize(struct buffer *buf);
-static uint64_t buf_readFLE(struct buffer *buf, uint64_t *len, uint8_t *is_null);
-static int buf_peekFLELen(struct buffer *buf);
-static int buf_readFLEStr(struct buffer *buf, char **str);
+static uint64_t buf_readFle(struct buffer *buf, uint64_t *len, uint8_t *is_null);
+static int buf_peekFleLen(struct buffer *buf);
+static int buf_dupFleStr(struct buffer *buf, char **str);
 
 static uint32_t get_mysql_pdu_len(struct buffer *buf);
 static void mysql_dissect_compressed_header(struct buffer *buf);
@@ -449,7 +449,7 @@ only appropriate in a Row Data Packet
 // is_null out   where to store ISNULL flag, may be NULL
 // return where to store FLE value, may be NULL
 static uint64_t
-buf_readFLE(struct buffer *buf, uint64_t *len, uint8_t *is_null)
+buf_readFle(struct buffer *buf, uint64_t *len, uint8_t *is_null)
 {
     uint8_t prefix = buf_readInt8(buf);
 
@@ -506,7 +506,7 @@ buf_readFLE(struct buffer *buf, uint64_t *len, uint8_t *is_null)
 }
 
 static int
-buf_peekFLELen(struct buffer *buf)
+buf_peekFleLen(struct buffer *buf)
 {
     uint8_t prefix = buf_readInt8(buf);
 
@@ -527,14 +527,27 @@ buf_peekFLELen(struct buffer *buf)
     }
 }
 
-// TODO free
 static int
-buf_readFLEStr(struct buffer *buf, char **str)
+buf_dupFleStr(struct buffer *buf, char **str)
 {
     uint64_t len;
-    uint64_t sz = buf_readFLE(buf, &len, NULL);
+    uint64_t sz = buf_readFle(buf, &len, NULL);
     *str = buf_dupStr(buf, sz);
     return len + sz;
+}
+
+static int
+buf_readFleStr(struct buffer *buf, char *str, int sz)
+{
+    uint64_t len;
+    uint64_t sz1 = buf_readFle(buf, &len, NULL);
+    if (sz1 > sz) {
+        assert(false);
+        return -1;
+    }
+
+    buf_readStr(buf, str, sz1);
+    return len + sz1;
 }
 
 /*
@@ -854,7 +867,7 @@ NullTerminatedString	Client Auth Plugin: e.g. mysql_native_password
     /* optional: connection attributes */
     if (conn_data->clnt_caps_ext & MYSQL_CAPS_CA && buf_readable(buf))
     {
-        uint64_t connattrs_length = buf_readFLE(buf, NULL, NULL);
+        uint64_t connattrs_length = buf_readFle(buf, NULL, NULL);
         while (connattrs_length > 0)
         {
             int length = mysql_dissect_attributes(buf);
@@ -870,8 +883,9 @@ mysql_dissect_attributes(struct buffer *buf)
 
     char *mysql_connattrs_name = NULL;
     char *mysql_connattrs_value = NULL;
-    int name_len = buf_readFLEStr(buf, &mysql_connattrs_name);
-    int val_len = buf_readFLEStr(buf, &mysql_connattrs_value);
+    
+    int name_len = buf_dupFleStr(buf, &mysql_connattrs_name);
+    int val_len = buf_dupFleStr(buf, &mysql_connattrs_value);
     LOG_INFO("Client Attributes %s %s", mysql_connattrs_name, mysql_connattrs_value);
     free(mysql_connattrs_name);
     free(mysql_connattrs_value);
@@ -1017,7 +1031,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
         {
             uint64_t lenfle;
             int length;
-            uint64_t connattrs_length = buf_readFLE(buf, &lenfle, NULL);
+            uint64_t connattrs_length = buf_readFle(buf, &lenfle, NULL);
             while (connattrs_length > 0)
             {
                 int length = mysql_dissect_attributes(buf);
@@ -1199,7 +1213,7 @@ mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data)
         {
             // mysql_dissect_response_prepare(buf, conn_data);
         }
-        else if (buf_readable(buf) > buf_peekFLELen(buf))
+        else if (buf_readable(buf) > buf_peekFleLen(buf))
         {
             mysql_dissect_ok_packet(buf, conn_data);
             if (conn_data->compressed_state == MYSQL_COMPRESS_INIT)
@@ -1244,7 +1258,7 @@ mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data)
             break;
 
         case PREPARED_FIELDS:
-            // offset = mysql_dissect_field_packet(tvb, offset, tree, conn_data);
+            mysql_dissect_field_packet(buf, conn_data);
             break;
 
         case AUTH_SWITCH_REQUEST:
@@ -1265,11 +1279,11 @@ static void
 mysql_dissect_result_header(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
     LOG_INFO("Tabular");
-    uint64_t num_fields = buf_readFLE(buf, NULL, NULL);
+    uint64_t num_fields = buf_readFle(buf, NULL, NULL);
     LOG_INFO("num fields %llu", num_fields);
     if (buf_readable(buf))
     {
-        uint64_t extra = buf_readFLE(buf, NULL, NULL);
+        uint64_t extra = buf_readFle(buf, NULL, NULL);
         LOG_INFO("extra %llu", extra);
     }
 
@@ -1288,10 +1302,10 @@ mysql_dissect_ok_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
     LOG_INFO("OK");
 
-    uint64_t affected_rows = buf_readFLE(buf, NULL, NULL);
+    uint64_t affected_rows = buf_readFle(buf, NULL, NULL);
     LOG_INFO("affected rows %llu", affected_rows);
 
-    uint64_t insert_id = buf_readFLE(buf, NULL, NULL);
+    uint64_t insert_id = buf_readFle(buf, NULL, NULL);
     if (insert_id)
     {
         LOG_INFO("insert id %llu", insert_id);
@@ -1317,7 +1331,7 @@ mysql_dissect_ok_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
         {
             int length;
 
-            int lenstr = buf_readFLE(buf, NULL, NULL);
+            int lenstr = buf_readFle(buf, NULL, NULL);
             /* first read the optional message */
             if (lenstr)
             {
@@ -1328,7 +1342,7 @@ mysql_dissect_ok_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
             /* session state tracking */
             if (server_status & MYSQL_STAT_SESSION_STATE_CHANGED)
             {
-                uint64_t session_track_length = buf_readFLE(buf, NULL, NULL);
+                uint64_t session_track_length = buf_readFle(buf, NULL, NULL);
                 LOG_INFO("Session Track Length %llu", session_track_length);
 
                 while (session_track_length > 0)
@@ -1356,68 +1370,44 @@ static void
 mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
     char *str;
-    buf_readFLEStr(buf, &str);
-    LOG_INFO("catalog %s", str);
-    free(str);
-    buf_readFLEStr(buf, &str);
-    LOG_INFO("db %s", str);
-    free(str);
-    buf_readFLEStr(buf, &str);
-    LOG_INFO("table %s", str);
-    free(str);
-    buf_readFLEStr(buf, &str);
-    LOG_INFO("org_table %s", str);
-    free(str);
-    buf_readFLEStr(buf, &str);
-    LOG_INFO("name %s", str);
-    free(str);
-    buf_readFLEStr(buf, &str);
-    LOG_INFO("org_name %s", str);
-    free(str);
-
+    buf_readFleStr(buf, g_buf, BUFSZ);
+    LOG_INFO("Catalog %s", g_buf);
+    
+    buf_readFleStr(buf, g_buf, BUFSZ);
+    LOG_INFO("Database %s", g_buf);
+    
+    buf_readFleStr(buf, g_buf, BUFSZ);
+    LOG_INFO("Table %s", g_buf);
+    
+    buf_readFleStr(buf, g_buf, BUFSZ);
+    LOG_INFO("Original Table %s", g_buf);
+    
+    buf_readFleStr(buf, g_buf, BUFSZ);
+    LOG_INFO("Name %s", g_buf);
+    
+    buf_readFleStr(buf, g_buf, BUFSZ);
+    LOG_INFO("Orginal Name %s", g_buf);
+    
     buf_retrieve(buf, 1);
 
-    uint16_t field_charset = buf_readInt16LE(buf);
-    uint32_t field_length = buf_readInt32LE(buf);
-    uint8_t field_type = buf_readInt8(buf);
-    // TODO
+    uint16_t charset = buf_readInt16LE(buf); // TODO fmt charset
+    uint32_t length = buf_readInt32LE(buf); 
+    uint8_t type = buf_readInt8(buf); // TODO fmt type name
     uint16_t flags = buf_readInt16LE(buf);
-    uint8_t field_decimal = buf_readInt8(buf);
+    uint8_t decimal = buf_readInt8(buf);
+    LOG_INFO("Charset %d", charset);
+    LOG_INFO("Length %d", length);
+    LOG_INFO("Type %d", type);
+    LOG_INFO("Flags 0x%04x", flags);
+    LOG_INFO("Decimal %d", decimal);
 
     buf_retrieve(buf, 2);
 
-    // TODO !!!!
-
-    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_catalog);
-    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_db);
-    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_table);
-    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_org_table);
-    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_name);
-    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_org_name);
-    // offset +=1; /* filler */
-
-    // proto_tree_add_item(tree, hf_mysql_fld_charsetnr, tvb, offset, 2, ENC_LITTLE_ENDIAN);
-    // offset += 2; /* charset */
-
-    // proto_tree_add_item(tree, hf_mysql_fld_length, tvb, offset, 4, ENC_LITTLE_ENDIAN);
-    // offset += 4; /* length */
-
-    // proto_tree_add_item(tree, hf_mysql_fld_type, tvb, offset, 1, ENC_NA);
-    // offset += 1; /* type */
-
-    // proto_tree_add_bitmask_with_flags(tree, tvb, offset, hf_mysql_fld_flags, ett_field_flags, mysql_fld_flags, ENC_LITTLE_ENDIAN, BMT_NO_APPEND);
-    // offset += 2; /* flags */
-
-    // proto_tree_add_item(tree, hf_mysql_fld_decimals, tvb, offset, 1, ENC_NA);
-    // offset += 1; /* decimals */
-
-    // offset += 2; /* filler */
-
-    // /* default (Only use for show fields) */
-    // if (tree && tvb_reported_length_remaining(tvb, offset) > 0) {
-    // 	offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_default);
-    // }
-    // return offset;
+    /* default (Only use for show fields) */
+    if (buf_readable(buf)) {
+        buf_readFleStr(buf, g_buf, BUFSZ);
+        LOG_INFO("Default %s", g_buf);
+    }
 }
 
 /*
@@ -1434,22 +1424,22 @@ mysql_dissect_session_tracker_entry(struct buffer *buf)
 
     /* session tracker type */
     uint8_t data_type = buf_readInt8(buf);
-    uint64_t length = buf_readFLE(buf, &lenfle, NULL); /* complete length of session tracking entry */
+    uint64_t length = buf_readFle(buf, &lenfle, NULL); /* complete length of session tracking entry */
     int sz = 1 + lenfle + length;
 
     switch (data_type)
     {
     case 0: /* SESSION_SYSVARS_TRACKER */
-        lenstr = buf_readFLE(buf, &lenfle, NULL);
+        lenstr = buf_readFle(buf, &lenfle, NULL);
         buf_readStr(buf, g_buf, lenstr);
         LOG_INFO("Session Track Sysvar Name %s", g_buf);
 
-        lenstr = buf_readFLE(buf, &lenfle, NULL);
+        lenstr = buf_readFle(buf, &lenfle, NULL);
         buf_readStr(buf, g_buf, lenstr);
         LOG_INFO("Session Track Sysvar Value %s", g_buf);
         break;
     case 1: /* CURRENT_SCHEMA_TRACKER */
-        lenstr = buf_readFLE(buf, &lenfle, NULL);
+        lenstr = buf_readFle(buf, &lenfle, NULL);
         buf_readStr(buf, g_buf, lenstr);
         LOG_INFO("Session Track Sysvar Schema %s", g_buf);
         break;
