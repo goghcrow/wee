@@ -15,8 +15,9 @@
 #define UNUSED(x) ((void)(x))
 #endif
 
-
-// 每个端口挂一个 struct conn(单向连接) 链表
+// 每个端口挂一个 struct conn 链表,
+// 简单处理, conn 代表半个 tcp 回话, 单方向连接
+// 每个 struct conn 挂一个 buffer 缓存接受数据, 用来处理粘包,半包
 #define PORT_QUEUE_SIZE 65535
 static QUEUE PORT_QUEUE[PORT_QUEUE_SIZE];
 
@@ -24,7 +25,8 @@ static int16_t mysql_server_port;
 static struct mysql_conn_data g_conn_data;
 #define BUFSZ 8192
 static char g_buf[BUFSZ];
-
+// 用来存在 每个 Mysql Packet
+static struct buffer *once_pkt_buf;
 
 struct conn
 {
@@ -161,12 +163,11 @@ void pq_add(struct conn *c)
     }
 }
 
-
 // malloc free 全部修改为 栈内存.... 反正不需要保存, 直接打印到控制台好了
 static int buf_strsize(struct buffer *buf);
-static uint64_t buf_readFLE(struct buffer* buf, uint64_t *len, uint8_t *is_null);
-static int buf_peekFLELen(struct buffer* buf);
-static int buf_readFLEStr(struct buffer* buf, char** str);
+static uint64_t buf_readFLE(struct buffer *buf, uint64_t *len, uint8_t *is_null);
+static int buf_peekFLELen(struct buffer *buf);
+static int buf_readFLEStr(struct buffer *buf, char **str);
 
 static uint32_t get_mysql_pdu_len(struct buffer *buf);
 static void mysql_dissect_compressed_header(struct buffer *buf);
@@ -177,13 +178,13 @@ static void mysql_dissect_error_packet(struct buffer *buf);
 static void mysql_set_conn_state(mysql_conn_data_t *conn_data, mysql_state_t state);
 static void mysql_dissect_greeting(struct buffer *buf, mysql_conn_data_t *conn_data);
 static void mysql_dissect_login(struct buffer *buf, mysql_conn_data_t *conn_data);
-static int  mysql_dissect_attributes(struct buffer *buf);
+static int mysql_dissect_attributes(struct buffer *buf);
 static void mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data);
 static void mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data);
 static void mysql_dissect_result_header(struct buffer *buf, mysql_conn_data_t *conn_data);
 static void mysql_dissect_ok_packet(struct buffer *buf, mysql_conn_data_t *conn_data);
-static void mysql_dissect_field_packet(struct buffer* buf, mysql_conn_data_t *conn_data);
-static int  mysql_dissect_session_tracker_entry(struct buffer *buf);
+static void mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data);
+static int mysql_dissect_session_tracker_entry(struct buffer *buf);
 
 void pkt_handle(void *ud,
                 const struct pcap_pkthdr *pkt_hdr,
@@ -193,37 +194,22 @@ void pkt_handle(void *ud,
                 const u_char *payload,
                 size_t payload_size)
 {
-    // if (payload_size > 0)
-    // {
-    //     // print_bytes((char *)payload, payload_size);
-    // }
-
-    // char ip_buf[INET_ADDRSTRLEN];
-
-    // printf("+-------------------------+\n");
-    // printf("   ACK: %u\n", ntohl(tcp_hdr->th_ack));
-    // printf("   SEQ: %u\n", ntohl(tcp_hdr->th_seq));
-
-    // inet_ntop(AF_INET, &(ip_hdr->ip_dst.s_addr), ip_buf, INET_ADDRSTRLEN);
-    // printf("   DST IP: %s\n", ip_buf);
-    // inet_ntop(AF_INET, &(ip_hdr->ip_src.s_addr), ip_buf, INET_ADDRSTRLEN);
-    // printf("   SRC IP: %s\n", ip_buf);
-
-    // printf("   SRC PORT: %d\n", ntohs(tcp_hdr->th_sport));
-    // printf("   DST PORT: %d\n", ntohs(tcp_hdr->th_dport));
-
-    struct conn *c;
-    uint32_t s_ip = ip_hdr->ip_src.s_addr;
-    uint16_t s_port = ntohs(tcp_hdr->th_sport);
-
     static char s_ip_buf[INET_ADDRSTRLEN];
     static char d_ip_buf[INET_ADDRSTRLEN];
 
-    // uint32_t d_ip = ip_hdr->ip_dst.s_addr;
+    struct conn *c;
+
+    uint32_t s_ip = ip_hdr->ip_src.s_addr;
+    uint16_t s_port = ntohs(tcp_hdr->th_sport);
+
+    uint32_t d_ip = ip_hdr->ip_dst.s_addr;
     uint16_t d_port = ntohs(tcp_hdr->th_dport);
 
     inet_ntop(AF_INET, &(ip_hdr->ip_src.s_addr), s_ip_buf, INET_ADDRSTRLEN);
     inet_ntop(AF_INET, &(ip_hdr->ip_dst.s_addr), d_ip_buf, INET_ADDRSTRLEN);
+
+    printf("%s:%d > %s:%d ack %u seq %u\n", s_ip_buf, s_port, d_ip_buf, d_port,
+           ntohl(tcp_hdr->th_ack), ntohl(tcp_hdr->th_seq));
 
     // 连接关闭, 清理数据
     if (tcp_hdr->th_flags & TH_FIN || tcp_hdr->th_flags & TH_RST)
@@ -259,68 +245,64 @@ void pkt_handle(void *ud,
     struct buffer *buf = c->buf;
     buf_append(buf, (const char *)payload, payload_size);
 
-    if (!is_completed_mysql_pdu(buf))
-    {
-        return;
-    }
-
     bool is_response = false;
     if (s_port == mysql_server_port)
     {
         is_response = true;
     }
 
-    int32_t pkt_sz = buf_readInt32LE24(buf);
-    uint8_t pkt_num = buf_readInt8(buf);
-    puts("");
-    LOG_INFO("%s:%d > %s:%d packet size %d packet num %d", s_ip_buf, s_port, d_ip_buf, s_port, pkt_sz, pkt_num);
-
-
-    // TODO 照顾逻辑 !!!!!copy 一份数据包, 存入一个新的buffer !!!!!
-    // 优化, buffer_view slice 一个 只读buffer
-    struct buffer * once_buf = buf_create(pkt_sz);
-    buf_append(once_buf, buf_peek(buf), pkt_sz);
-    buf_retrieve(buf, pkt_sz);
-
-    // TODO 检测是否是 SSL !!!
-    bool is_ssl = false;
-
-    if (is_response)
+    // 一个 tcp segment 可能包括 N 个 Mysql Packet, 比如 select查询结果集
+    while (is_completed_mysql_pdu(buf))
     {
-        if (pkt_num == 0 && g_conn_data.state == UNDEFINED)
+        int32_t pkt_sz = buf_readInt32LE24(buf);
+        uint8_t pkt_num = buf_readInt8(buf);
+        LOG_INFO("%s:%d > %s:%d pkt_sz %d, pkt_no %d", s_ip_buf, s_port, d_ip_buf, s_port, pkt_sz, pkt_num);
+
+        // 这里为简化逻辑处理, 每个 Mysql Packet 使用单独 buffer 对象, Copy 一份数据
+        // 对于处理不了的 packet 可以直接忽略处理~ 不影响后续包
+        
+        // 重置 once_pkt_buf, 从 buf 转义数据到 once_pkt_buf
+        buf_retrieveAll(once_pkt_buf);
+        buf_append(once_pkt_buf, buf_peek(buf), pkt_sz);
+        buf_retrieve(buf, pkt_sz);
+
+        // TODO 检测是否是 SSL !!!
+        bool is_ssl = false;
+
+        if (is_response)
         {
-            LOG_INFO("Server Greeting");
-            mysql_dissect_greeting(once_buf, &g_conn_data);
-        }
-        else
-        {
-            LOG_INFO("Response");
-            mysql_dissect_response(once_buf, &g_conn_data);
-        }
-    }
-    else
-    {
-        // TODO 这里 有问题, 暂时没进入该分支 !!!!, 抓取不到 login
-        if (g_conn_data.state == LOGIN && (pkt_num == 1 || (pkt_num == 2 && is_ssl)))
-        {
-            LOG_INFO("Login Request");
-            mysql_dissect_login(once_buf, &g_conn_data);
-            if (pkt_num == 2 && is_ssl) {
-                PANIC("SLL NOT SUPPORT");
-            }
-            // TODO 处理 SSL
-            /*
-            if ((g_conn_data.srv_caps & MYSQL_CAPS_CP) && (g_conn_data.clnt_caps & MYSQL_CAPS_CP))
+            if (pkt_num == 0 && g_conn_data.state == UNDEFINED)
             {
-                g_conn_data.frame_start_compressed = pinfo->num;
-                g_conn_data.compressed_state = MYSQL_COMPRESS_INIT;
+                mysql_dissect_greeting(once_pkt_buf, &g_conn_data);
             }
-            */
+            else
+            {
+                mysql_dissect_response(once_pkt_buf, &g_conn_data);
+            }
         }
         else
         {
-            LOG_INFO("Request");
-            mysql_dissect_request(once_buf, &g_conn_data);
+            // TODO 这里 有问题, 暂时没进入该分支 !!!!, 抓取不到 login
+            if (g_conn_data.state == LOGIN && (pkt_num == 1 || (pkt_num == 2 && is_ssl)))
+            {
+                mysql_dissect_login(once_pkt_buf, &g_conn_data);
+                if (pkt_num == 2 && is_ssl)
+                {
+                    PANIC("SLL NOT SUPPORT");
+                }
+                // TODO 处理 SSL
+                /*
+                if ((g_conn_data.srv_caps & MYSQL_CAPS_CP) && (g_conn_data.clnt_caps & MYSQL_CAPS_CP))
+                {
+                    g_conn_data.frame_start_compressed = pinfo->num;
+                    g_conn_data.compressed_state = MYSQL_COMPRESS_INIT;
+                }
+                */
+            }
+            else
+            {
+                mysql_dissect_request(once_pkt_buf, &g_conn_data);
+            }
         }
     }
 
@@ -328,12 +310,12 @@ void pkt_handle(void *ud,
     {
         buf_shrink(c->buf, 0);
     }
-    buf_release(once_buf);
 }
 
 void init()
 {
     pq_init();
+
     g_conn_data.srv_caps = 0;
     g_conn_data.clnt_caps = 0;
     g_conn_data.clnt_caps_ext = 0;
@@ -343,6 +325,14 @@ void init()
     g_conn_data.frame_start_ssl = 0;
     g_conn_data.frame_start_compressed = 0;
     g_conn_data.compressed_state = MYSQL_COMPRESS_NONE;
+
+    once_pkt_buf = buf_create(BUFSZ);
+}
+
+void release()
+{
+    pq_release();
+    buf_release(once_pkt_buf);
 }
 
 int main(int argc, char **argv)
@@ -373,18 +363,20 @@ int main(int argc, char **argv)
     if (!tcpsniff(&opt, pkt_handle))
     {
         fprintf(stderr, "fail to sniff\n");
+        release();
     }
     return 0;
 }
 
-
-static 
-int buf_strsize(struct buffer *buf) {
+static int buf_strsize(struct buffer *buf)
+{
     const char *eos = buf_findChar(buf, '\0');
     if (eos == NULL)
     {
         return buf_readable(buf);
-    } else {
+    }
+    else
+    {
         return eos - buf_peek(buf);
     }
 }
@@ -431,7 +423,7 @@ bool is_completed_mysql_pdu(struct buffer *buf)
     int32_t sz = buf_peekInt32LE24(buf);
     if (sz <= 0 || sz >= MYSQL_MAX_PACKET_LEN)
     {
-        PANIC("malformed mysql packet(size=%d)\n", sz);
+        PANIC("Malformed Mysql Packet (size=%d)\n", sz);
         return false;
     }
     return buf_readable(buf) >= sz + 4;
@@ -453,90 +445,97 @@ only appropriate in a Row Data Packet
 // no length value or data following the code, and the value of the field is the SQL
 
 // field length encoded
-// len     out   
+// len     out
 // is_null out   where to store ISNULL flag, may be NULL
 // return where to store FLE value, may be NULL
 static uint64_t
-buf_readFLE(struct buffer* buf, uint64_t *len, uint8_t *is_null)
+buf_readFLE(struct buffer *buf, uint64_t *len, uint8_t *is_null)
 {
-	uint8_t prefix = buf_readInt8(buf);
-	
-	if (is_null) {
-		*is_null = 0;
-	}
+    uint8_t prefix = buf_readInt8(buf);
 
-	switch (prefix) {
-	case 251:
-		if (len) {
-			*len = 1;
-		}
-		if (is_null) {
-			*is_null = 1;
-		}
-		return 0;
-	case 252:
-		if (len) {
-			*len = 1 + 2;
-		}
-		return buf_readInt16LE(buf);
-	case 253:
-		if (len) {
-			*len = 1 + 4;
-		}
-		return buf_readInt32LE(buf);
+    if (is_null)
+    {
+        *is_null = 0;
+    }
 
-		// TODO 好像有种情况是这样 !!!
-		/*
+    switch (prefix)
+    {
+    case 251:
+        if (len)
+        {
+            *len = 1;
+        }
+        if (is_null)
+        {
+            *is_null = 1;
+        }
+        return 0;
+    case 252:
+        if (len)
+        {
+            *len = 1 + 2;
+        }
+        return buf_readInt16LE(buf);
+    case 253:
+        if (len)
+        {
+            *len = 1 + 4;
+        }
+        return buf_readInt32LE(buf);
+
+        // TODO 好像有种情况是这样 !!!
+        /*
 		if (len) {
 			*len = 1 + 3;
 		}
 		return buf_readInt32LE24(buf);
 		*/
-	case 254:
-		if (len) {
-			*len = 1 + 8;
-		}
-		return buf_readInt64LE(buf);
-	default: /* < 251 */
-		if (len) {
-			*len = 1;
-		}
-		return prefix;
-	}
+    case 254:
+        if (len)
+        {
+            *len = 1 + 8;
+        }
+        return buf_readInt64LE(buf);
+    default: /* < 251 */
+        if (len)
+        {
+            *len = 1;
+        }
+        return prefix;
+    }
 }
 
 static int
-buf_peekFLELen(struct buffer* buf)
+buf_peekFLELen(struct buffer *buf)
 {
-	uint8_t prefix = buf_readInt8(buf);
-	
-	switch (prefix) {
-	case 251:
-		return 1;
-	case 252:
-		return 1 + 2;
-	case 253:
-		return 1 + 4;
-		// TODO
-		return 1 + 3;
-	case 254:
-		return 1 + 8;
-	default: /* < 251 */
-		return 1;
-	}
-}
+    uint8_t prefix = buf_readInt8(buf);
 
+    switch (prefix)
+    {
+    case 251:
+        return 1;
+    case 252:
+        return 1 + 2;
+    case 253:
+        return 1 + 4;
+        // TODO
+        return 1 + 3;
+    case 254:
+        return 1 + 8;
+    default: /* < 251 */
+        return 1;
+    }
+}
 
 // TODO free
 static int
-buf_readFLEStr(struct buffer* buf, char** str) {
-	uint64_t len;
-	uint64_t sz = buf_readFLE(buf, &len, NULL);
-	*str = buf_dupStr(buf, sz);
-	return len + sz;
+buf_readFLEStr(struct buffer *buf, char **str)
+{
+    uint64_t len;
+    uint64_t sz = buf_readFLE(buf, &len, NULL);
+    *str = buf_dupStr(buf, sz);
+    return len + sz;
 }
-
-
 
 /*
 参考文档
@@ -638,13 +637,14 @@ NULL-terminated-str			"mysql_native_password\0"	Authentication Plugin
 static void
 mysql_dissect_greeting(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
+    LOG_INFO("Server Greeting");
     int protocol = buf_readInt8(buf);
     if (protocol == 0xff)
     {
         mysql_dissect_error_packet(buf);
         return;
     }
-    
+
     mysql_set_conn_state(conn_data, LOGIN);
     LOG_INFO("Protocol 0x%02x", protocol);
 
@@ -693,21 +693,21 @@ mysql_dissect_greeting(struct buffer *buf, mysql_conn_data_t *conn_data)
     /* 1 byte Charset */
     int8_t charset = buf_readInt8(buf);
     LOG_INFO("Server Charset 0x%02x", charset); // TODO fmt charset
-    
+
     /* 2 byte ServerStatus */
     int16_t server_status = buf_readInt16LE(buf);
     LOG_INFO("Server Statue 0x%04x", server_status); // TODO fmt charset
-    
+
     /* 2 bytes ExtCAPS */
     conn_data->srv_caps_ext = buf_readInt16LE(buf);
     LOG_INFO("Server Extended Capabilities 0x%04x", conn_data->srv_caps_ext);
-    
+
     /* 1 byte Auth Plugin Length */
     int8_t auto_plugin_len = buf_readInt8(buf);
-    
+
     /* 10 bytes unused */
     buf_retrieve(buf, 10);
-    
+
     /* 4.1+ server: rest of salt */
     if (buf_readable(buf))
     {
@@ -727,17 +727,18 @@ static void
 mysql_dissect_error_packet(struct buffer *buf)
 {
     int16_t errno = buf_readInt16LE(buf);
+    LOG_ERROR("Error Code %d", errno);
 
     char *sqlstate;
-    if (*buf_peek(buf) == '#')
+    const char *c = buf_peek(buf);
+    if (*c == '#')
     {
         buf_retrieve(buf, 1);
-
-        sqlstate = buf_dupStr(buf, 5);
-        free(sqlstate);
+        buf_readStr(buf, g_buf, 5);
+        LOG_ERROR("SQL State %s", g_buf);
     }
-    char *errstr = buf_dupCStr(buf);
-    LOG_ERROR("%s(%d)\n", errstr, errno);
+    buf_readStr(buf, g_buf, BUFSZ);
+    LOG_ERROR("Error Message: %s", g_buf);
 }
 
 static void
@@ -749,6 +750,8 @@ mysql_set_conn_state(mysql_conn_data_t *conn_data, mysql_state_t state)
 static void
 mysql_dissect_login(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
+    LOG_INFO("Login Request");
+
     int lenstr;
 
     /* after login there can be OK or DENIED */
@@ -854,241 +857,252 @@ NullTerminatedString	Client Auth Plugin: e.g. mysql_native_password
         uint64_t connattrs_length = buf_readFLE(buf, NULL, NULL);
         while (connattrs_length > 0)
         {
-            int length =  mysql_dissect_attributes(buf);
+            int length = mysql_dissect_attributes(buf);
             connattrs_length -= length;
         }
     }
 }
 
 static int
- mysql_dissect_attributes(struct buffer *buf) {
-	int lenfle;
+mysql_dissect_attributes(struct buffer *buf)
+{
+    int lenfle;
 
-	char* mysql_connattrs_name = NULL;
-	char* mysql_connattrs_value = NULL;
-	int name_len = buf_readFLEStr(buf, &mysql_connattrs_name);
-	int val_len = buf_readFLEStr(buf, &mysql_connattrs_value);
+    char *mysql_connattrs_name = NULL;
+    char *mysql_connattrs_value = NULL;
+    int name_len = buf_readFLEStr(buf, &mysql_connattrs_name);
+    int val_len = buf_readFLEStr(buf, &mysql_connattrs_value);
     LOG_INFO("Client Attributes %s %s", mysql_connattrs_name, mysql_connattrs_value);
-	free(mysql_connattrs_name);
-	free(mysql_connattrs_value);
-	return name_len + val_len;
+    free(mysql_connattrs_name);
+    free(mysql_connattrs_value);
+    return name_len + val_len;
 }
 
 static void
 mysql_dissect_auth_switch_response(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
-	int lenstr;
-	LOG_INFO("Auth Switch Response");
+    int lenstr;
+    LOG_INFO("Auth Switch Response");
 
-	/* Data */
-	char *data = buf_dupCStr(buf);
+    /* Data */
+    char *data = buf_dupCStr(buf);
     LOG_INFO("%s", data);
-	free(data);
+    free(data);
 }
 
-/*, packet_info *pinfo, */ 
+/*, packet_info *pinfo, */
 static void
 mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
-	int lenstr;
-	uint32_t stmt_id;
-	my_stmt_data_t *stmt_data;
-	int stmt_pos, param_offset;
+    int lenstr;
+    uint32_t stmt_id;
+    my_stmt_data_t *stmt_data;
+    int stmt_pos, param_offset;
 
-	if(conn_data->state == AUTH_SWITCH_RESPONSE){
-		mysql_dissect_auth_switch_response(buf, conn_data);
-		return;
-	}
+    if (conn_data->state == AUTH_SWITCH_RESPONSE)
+    {
+        LOG_INFO("Request");
+        mysql_dissect_auth_switch_response(buf, conn_data);
+        return;
+    }
 
-	int opcode = buf_readInt8(buf);
-    LOG_INFO("OPCODE 0x%02x %s", opcode, val_to_str(opcode, "Unknown"));
+    int opcode = buf_readInt8(buf);
+    LOG_INFO("Request Opcode 0x%02x %s", opcode, val_to_str(opcode, "Unknown"));
 
-	switch (opcode) {
+    switch (opcode)
+    {
 
-	case MYSQL_QUIT:
-		break;
+    case MYSQL_QUIT:
+        break;
 
-	case MYSQL_PROCESS_INFO:
-		mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
-		break;
+    case MYSQL_PROCESS_INFO:
+        mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
+        break;
 
-	case MYSQL_DEBUG:
-	case MYSQL_PING:
-		mysql_set_conn_state(conn_data, RESPONSE_OK);
-		break;
+    case MYSQL_DEBUG:
+    case MYSQL_PING:
+        mysql_set_conn_state(conn_data, RESPONSE_OK);
+        break;
 
-	case MYSQL_STATISTICS:
-		mysql_set_conn_state(conn_data, RESPONSE_MESSAGE);
-		break;
+    case MYSQL_STATISTICS:
+        mysql_set_conn_state(conn_data, RESPONSE_MESSAGE);
+        break;
 
-	case MYSQL_INIT_DB:
-	case MYSQL_CREATE_DB:
-	case MYSQL_DROP_DB:
+    case MYSQL_INIT_DB:
+    case MYSQL_CREATE_DB:
+    case MYSQL_DROP_DB:
         buf_readCStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql Schema: %s", g_buf);
-		mysql_set_conn_state(conn_data, RESPONSE_OK);
-		break;
+        mysql_set_conn_state(conn_data, RESPONSE_OK);
+        break;
 
-	case MYSQL_QUERY:
+    case MYSQL_QUERY:
         buf_readStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql Query: %s", g_buf);
-		mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
-		break;
+        mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
+        break;
 
-	case MYSQL_STMT_PREPARE:
+    case MYSQL_STMT_PREPARE:
         buf_readCStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql Query: %s", g_buf);
-		mysql_set_conn_state(conn_data, RESPONSE_PREPARE);
-		break;
+        mysql_set_conn_state(conn_data, RESPONSE_PREPARE);
+        break;
 
-	case MYSQL_STMT_CLOSE:
-        {
-		uint32_t mysql_stmt_id = buf_readInt32LE(buf);
-		mysql_set_conn_state(conn_data, REQUEST);
-        }
-		break;
+    case MYSQL_STMT_CLOSE:
+    {
+        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
+        mysql_set_conn_state(conn_data, REQUEST);
+    }
+    break;
 
-	case MYSQL_STMT_RESET:
-        {
-		uint32_t mysql_stmt_id = buf_readInt32LE(buf);
-		mysql_set_conn_state(conn_data, RESPONSE_OK);
-        }
-		break;
+    case MYSQL_STMT_RESET:
+    {
+        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
+        mysql_set_conn_state(conn_data, RESPONSE_OK);
+    }
+    break;
 
-	case MYSQL_FIELD_LIST:
+    case MYSQL_FIELD_LIST:
         buf_readCStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql Table Name: %s", g_buf);
-		mysql_set_conn_state(conn_data, RESPONSE_SHOW_FIELDS);
-		break;
+        mysql_set_conn_state(conn_data, RESPONSE_SHOW_FIELDS);
+        break;
 
-	case MYSQL_PROCESS_KILL:
-        {
-		uint32_t mysql_thd_id = buf_readInt32LE(buf);
-        }
-		mysql_set_conn_state(conn_data, RESPONSE_OK);
-		break;
+    case MYSQL_PROCESS_KILL:
+    {
+        uint32_t mysql_thd_id = buf_readInt32LE(buf);
+    }
+        mysql_set_conn_state(conn_data, RESPONSE_OK);
+        break;
 
-	case MYSQL_CHANGE_USER:
-		{
+    case MYSQL_CHANGE_USER:
+    {
         buf_readCStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql User %s", g_buf);
 
-		char * mysql_passwd;
-		if (conn_data->clnt_caps & MYSQL_CAPS_SC) {
-			int len = buf_readInt8(buf);
+        char *mysql_passwd;
+        if (conn_data->clnt_caps & MYSQL_CAPS_SC)
+        {
+            int len = buf_readInt8(buf);
             buf_readStr(buf, g_buf, len);
-		} else {
+        }
+        else
+        {
             buf_readCStr(buf, g_buf, BUFSZ);
-		}
+        }
         // LOG_INFO("Mysql Password %s", mysql_passwd);
 
         buf_readCStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql Schema %s", mysql_passwd);
 
-		if (buf_readable(buf)) {
-			uint8_t charset = buf_readInt8(buf);
-			buf_retrieve(buf, 1);
-		}
+        if (buf_readable(buf))
+        {
+            uint8_t charset = buf_readInt8(buf);
+            buf_retrieve(buf, 1);
         }
-		mysql_set_conn_state(conn_data, RESPONSE_OK);
+    }
+        mysql_set_conn_state(conn_data, RESPONSE_OK);
 
-		char * mysql_client_auth_plugin = NULL;
-		/* optional: authentication plugin */
-		if (conn_data->clnt_caps_ext & MYSQL_CAPS_PA)
-		{
-			mysql_set_conn_state(conn_data, AUTH_SWITCH_REQUEST);
-			buf_readCStr(buf, g_buf, BUFSZ);
+        char *mysql_client_auth_plugin = NULL;
+        /* optional: authentication plugin */
+        if (conn_data->clnt_caps_ext & MYSQL_CAPS_PA)
+        {
+            mysql_set_conn_state(conn_data, AUTH_SWITCH_REQUEST);
+            buf_readCStr(buf, g_buf, BUFSZ);
             LOG_INFO("Mysql Client Auth Plugin %s", g_buf);
-		}
-
-		/* optional: connection attributes */
-		if (conn_data->clnt_caps_ext & MYSQL_CAPS_CA)
-		{
-			uint64_t lenfle;
-			int length;
-			uint64_t connattrs_length = buf_readFLE(buf, &lenfle, NULL);
-			while (connattrs_length > 0) {
-				int length =  mysql_dissect_attributes(buf);
-				connattrs_length -= length;
-			}
-		}
-		break;
-
-	case MYSQL_REFRESH:
-        {
-		uint8_t mysql_refresh = buf_readInt8(buf);
-        }
-		mysql_set_conn_state(conn_data, RESPONSE_OK);
-		break;
-
-	case MYSQL_SHUTDOWN:
-        {
-		uint8_t mysql_shutdown = buf_readInt8(buf);
-        }
-		mysql_set_conn_state(conn_data, RESPONSE_OK);
-		break;
-
-	case MYSQL_SET_OPTION:
-        {
-		uint16_t mysql_option = buf_readInt16LE(buf);
-        }
-		mysql_set_conn_state(conn_data, RESPONSE_OK);
-		break;
-
-	case MYSQL_STMT_FETCH:
-        {
-		uint32_t mysql_stmt_id = buf_readInt32LE(buf);
-		uint32_t mysql_num_rows = buf_readInt32LE(buf);
-        }
-		mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
-		break;
-
-	case MYSQL_STMT_SEND_LONG_DATA:
-        {
-		uint32_t mysql_stmt_id = buf_readInt32LE(buf);
-		uint16_t mysql_param = buf_readInt16(buf);
         }
 
-		if (buf_readable(buf)) {
+        /* optional: connection attributes */
+        if (conn_data->clnt_caps_ext & MYSQL_CAPS_CA)
+        {
+            uint64_t lenfle;
+            int length;
+            uint64_t connattrs_length = buf_readFLE(buf, &lenfle, NULL);
+            while (connattrs_length > 0)
+            {
+                int length = mysql_dissect_attributes(buf);
+                connattrs_length -= length;
+            }
+        }
+        break;
+
+    case MYSQL_REFRESH:
+    {
+        uint8_t mysql_refresh = buf_readInt8(buf);
+    }
+        mysql_set_conn_state(conn_data, RESPONSE_OK);
+        break;
+
+    case MYSQL_SHUTDOWN:
+    {
+        uint8_t mysql_shutdown = buf_readInt8(buf);
+    }
+        mysql_set_conn_state(conn_data, RESPONSE_OK);
+        break;
+
+    case MYSQL_SET_OPTION:
+    {
+        uint16_t mysql_option = buf_readInt16LE(buf);
+    }
+        mysql_set_conn_state(conn_data, RESPONSE_OK);
+        break;
+
+    case MYSQL_STMT_FETCH:
+    {
+        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
+        uint32_t mysql_num_rows = buf_readInt32LE(buf);
+    }
+        mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
+        break;
+
+    case MYSQL_STMT_SEND_LONG_DATA:
+    {
+        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
+        uint16_t mysql_param = buf_readInt16(buf);
+    }
+
+        if (buf_readable(buf))
+        {
             buf_readCStr(buf, g_buf, BUFSZ);
             LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
-		}
-		mysql_set_conn_state(conn_data, REQUEST);
-		break;
-
-	case MYSQL_STMT_EXECUTE:
-        {
-		uint32_t mysql_stmt_id = buf_readInt32LE(buf);
-		uint8_t mysql_exec = buf_readInt8(buf);
-		uint32_t mysql_exec_iter = buf_readInt32LE(buf);
         }
+        mysql_set_conn_state(conn_data, REQUEST);
+        break;
 
-		// TODO STMT !!!!!
-		// stmt_data = (my_stmt_data_t *)wmem_tree_lookup32(conn_data->stmts, stmt_id);
-		// if (stmt_data != NULL) {
-		// 	if (stmt_data->nparam != 0) {
-		// 		uint8_t stmt_bound;
-		// 		offset += (stmt_data->nparam + 7) / 8; /* NULL bitmap */
-		// 		proto_tree_add_item(req_tree, hf_mysql_new_parameter_bound_flag, tvb, offset, 1, ENC_NA);
-		// 		stmt_bound = tvb_get_guint8(tvb, offset);
-		// 		offset += 1;
-		// 		if (stmt_bound == 1) {
-		// 			param_offset = offset + stmt_data->nparam * 2;
-		// 			for (stmt_pos = 0; stmt_pos < stmt_data->nparam; stmt_pos++) {
-		// 				if (!mysql_dissect_exec_param(req_tree, tvb, &offset, &param_offset,
-		// 							      stmt_data->param_flags[stmt_pos], pinfo))
-		// 					break;
-		// 			}
-		// 			offset = param_offset;
-		// 		}
-		// 	}
-		// } else
+    case MYSQL_STMT_EXECUTE:
+    {
+        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
+        uint8_t mysql_exec = buf_readInt8(buf);
+        uint32_t mysql_exec_iter = buf_readInt32LE(buf);
+    }
+
+        // TODO STMT !!!!!
+        // stmt_data = (my_stmt_data_t *)wmem_tree_lookup32(conn_data->stmts, stmt_id);
+        // if (stmt_data != NULL) {
+        // 	if (stmt_data->nparam != 0) {
+        // 		uint8_t stmt_bound;
+        // 		offset += (stmt_data->nparam + 7) / 8; /* NULL bitmap */
+        // 		proto_tree_add_item(req_tree, hf_mysql_new_parameter_bound_flag, tvb, offset, 1, ENC_NA);
+        // 		stmt_bound = tvb_get_guint8(tvb, offset);
+        // 		offset += 1;
+        // 		if (stmt_bound == 1) {
+        // 			param_offset = offset + stmt_data->nparam * 2;
+        // 			for (stmt_pos = 0; stmt_pos < stmt_data->nparam; stmt_pos++) {
+        // 				if (!mysql_dissect_exec_param(req_tree, tvb, &offset, &param_offset,
+        // 							      stmt_data->param_flags[stmt_pos], pinfo))
+        // 					break;
+        // 			}
+        // 			offset = param_offset;
+        // 		}
+        // 	}
+        // } else
         {
-			if (buf_readable(buf)) {
+            if (buf_readable(buf))
+            {
                 buf_readCStr(buf, g_buf, BUFSZ);
                 LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
-			}
-		}
+            }
+        }
 
         /*
 		if (buf_readable(buf)) {
@@ -1097,222 +1111,269 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
 		}
         */
 
-		mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
-		break;
+        mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
+        break;
 
-	case MYSQL_BINLOG_DUMP:
+    case MYSQL_BINLOG_DUMP:
+    {
+        uint32_t mysql_binlog_position = buf_readInt32LE(buf);
+        uint16_t mysql_binlog_flags = buf_readInt16(buf); // BIG_ENDIAN !!!
+        uint32_t mysql_binlog_server_id = buf_readInt32LE(buf);
+    }
+
+        /* binlog file name ? */
+        if (buf_readable(buf))
         {
-		uint32_t mysql_binlog_position = buf_readInt32LE(buf);
-		uint16_t mysql_binlog_flags = buf_readInt16(buf); // BIG_ENDIAN !!!
-		uint32_t mysql_binlog_server_id = buf_readInt32LE(buf);
-        }
-
-		/* binlog file name ? */
-		if (buf_readable(buf)) {
             buf_readCStr(buf, g_buf, BUFSZ);
             LOG_INFO("Mysql Binlog File Name %s", g_buf);
-		}
+        }
 
-		mysql_set_conn_state(conn_data, REQUEST);
-		break;
+        mysql_set_conn_state(conn_data, REQUEST);
+        break;
 
-	case MYSQL_TABLE_DUMP:
-	case MYSQL_CONNECT_OUT:
-	case MYSQL_REGISTER_SLAVE:
-		mysql_set_conn_state(conn_data, REQUEST);
-		break;
+    case MYSQL_TABLE_DUMP:
+    case MYSQL_CONNECT_OUT:
+    case MYSQL_REGISTER_SLAVE:
+        mysql_set_conn_state(conn_data, REQUEST);
+        break;
 
-	default:
-		mysql_set_conn_state(conn_data, UNDEFINED);
-	}
+    default:
+        mysql_set_conn_state(conn_data, UNDEFINED);
+    }
 }
 
 static void
 mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
-	uint16_t server_status = 0;
-	// uint8_t response_code = buf_readInt8(buf);
+    uint16_t server_status = 0;
+    // uint8_t response_code = buf_readInt8(buf);
     uint8_t response_code = buf_peekInt8(buf);
-	
-	if ( response_code == 0xff ) { // ERR
+
+    LOG_INFO("Response Code 0x%02x", response_code);
+
+    if (response_code == 0xff)
+    { // ERR
         buf_retrieve(buf, sizeof(uint8_t));
-		mysql_dissect_error_packet(buf);
-		mysql_set_conn_state(conn_data, REQUEST);
-	} else if (response_code == 0xfe && buf_readable(buf) < 9) { // EOF
-	 	// uint8_t mysql_eof = buf_readInt8(buf);
+        mysql_dissect_error_packet(buf);
+        mysql_set_conn_state(conn_data, REQUEST);
+    }
+    else if (response_code == 0xfe && buf_readable(buf) < 9)
+    { // EOF
+        // uint8_t mysql_eof = buf_readInt8(buf);
 
-		// /* pre-4.1 packet ends here */
-		// if (buf_readable(buf)) {
-		// 	uint16_t mysql_num_warn = buf_readInt16LE(buf);
-		// 	server_status = buf_readInt16LE(buf);
-		// }
+        // /* pre-4.1 packet ends here */
+        // if (buf_readable(buf)) {
+        // 	uint16_t mysql_num_warn = buf_readInt16LE(buf);
+        // 	server_status = buf_readInt16LE(buf);
+        // }
 
-		// switch (conn_data->state) {
-		// case FIELD_PACKET:
-		// 	mysql_set_conn_state(conn_data, ROW_PACKET);
-		// 	break;
-		// case ROW_PACKET:
-		// 	if (server_status & MYSQL_STAT_MU) {
-		// 		mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
-		// 	} else {
-		// 		mysql_set_conn_state(conn_data, REQUEST);
-		// 	}
-		// 	break;
-		// case PREPARED_PARAMETERS:
-		// 	if (conn_data->stmt_num_fields > 0) {
-		// 		mysql_set_conn_state(conn_data, PREPARED_FIELDS);
-		// 	} else {
-		// 		mysql_set_conn_state(conn_data, REQUEST);
-		// 	}
-		// 	break;
-		// case PREPARED_FIELDS:
-		// 	mysql_set_conn_state(conn_data, REQUEST);
-		// 	break;
-		// default:
-		// 	/* This should be an unreachable case */
-		// 	mysql_set_conn_state(conn_data, REQUEST);
-		// }
-	} else if (response_code == 0x00) { // OK
-		if (conn_data->state == RESPONSE_PREPARE) {
-			// mysql_dissect_response_prepare(buf, conn_data);
-		} else if (buf_readable(buf) > buf_peekFLELen(buf)) {
-			mysql_dissect_ok_packet(buf, conn_data);
-			// if (conn_data->compressed_state == MYSQL_COMPRESS_INIT) {
-			// 	/* This is the OK packet which follows the compressed protocol setup */
-			// 	conn_data->compressed_state = MYSQL_COMPRESS_ACTIVE;
-			// }
-		} else {
-			mysql_dissect_result_header(buf, conn_data);
-		}
-	} else {
-		switch (conn_data->state) {
-		case RESPONSE_MESSAGE:
-			// if ((lenstr = tvb_reported_length_remaining(tvb, offset))) {
-			// 	proto_tree_add_item(tree, hf_mysql_message, tvb, offset, lenstr, ENC_ASCII|ENC_NA);
-			// 	offset += lenstr;
-			// }
-			mysql_set_conn_state(conn_data, REQUEST);
-			break;
-
-		case RESPONSE_TABULAR:
-			mysql_dissect_result_header(buf, conn_data);
-			break;
-
-		case FIELD_PACKET:
-		case RESPONSE_SHOW_FIELDS:
-		case RESPONSE_PREPARE:
-		case PREPARED_PARAMETERS:
-			mysql_dissect_field_packet(buf, conn_data);
-			break;
-
-		case ROW_PACKET:
-			// offset = mysql_dissect_row_packet(tvb, offset, tree);
-			break;
-
-		case PREPARED_FIELDS:
-			// offset = mysql_dissect_field_packet(tvb, offset, tree, conn_data);
-			break;
-
-		case AUTH_SWITCH_REQUEST:
-			// offset = mysql_dissect_auth_switch_request(tvb, offset, tree, conn_data);
-			break;
-
-		default:
-			// ti = proto_tree_add_item(tree, hf_mysql_payload, tvb, offset, -1, ENC_NA);
-			// expert_add_info(ti, &ei_mysql_unknown_response);
-			// offset += tvb_reported_length_remaining(tvb, offset);
-			// mysql_set_conn_state(conn_data, UNDEFINED);
+        // switch (conn_data->state) {
+        // case FIELD_PACKET:
+        // 	mysql_set_conn_state(conn_data, ROW_PACKET);
+        // 	break;
+        // case ROW_PACKET:
+        // 	if (server_status & MYSQL_STAT_MU) {
+        // 		mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
+        // 	} else {
+        // 		mysql_set_conn_state(conn_data, REQUEST);
+        // 	}
+        // 	break;
+        // case PREPARED_PARAMETERS:
+        // 	if (conn_data->stmt_num_fields > 0) {
+        // 		mysql_set_conn_state(conn_data, PREPARED_FIELDS);
+        // 	} else {
+        // 		mysql_set_conn_state(conn_data, REQUEST);
+        // 	}
+        // 	break;
+        // case PREPARED_FIELDS:
+        // 	mysql_set_conn_state(conn_data, REQUEST);
+        // 	break;
+        // default:
+        // 	/* This should be an unreachable case */
+        // 	mysql_set_conn_state(conn_data, REQUEST);
+        // }
+    }
+    else if (response_code == 0x00)
+    { // OK
+        if (conn_data->state == RESPONSE_PREPARE)
+        {
+            // mysql_dissect_response_prepare(buf, conn_data);
+        }
+        else if (buf_readable(buf) > buf_peekFLELen(buf))
+        {
+            mysql_dissect_ok_packet(buf, conn_data);
+            if (conn_data->compressed_state == MYSQL_COMPRESS_INIT)
+            {
+                /* This is the OK packet which follows the compressed protocol setup */
+                conn_data->compressed_state = MYSQL_COMPRESS_ACTIVE;
+                // TODO
+                PANIC("MYSQL_COMPRESS NOT SUPPORT");
+            }
+        }
+        else
+        {
+            mysql_dissect_result_header(buf, conn_data);
+        }
+    }
+    else
+    {
+        switch (conn_data->state)
+        {
+        case RESPONSE_MESSAGE:
+            // if ((lenstr = tvb_reported_length_remaining(tvb, offset))) {
+            // 	proto_tree_add_item(tree, hf_mysql_message, tvb, offset, lenstr, ENC_ASCII|ENC_NA);
+            // 	offset += lenstr;
+            // }
+            mysql_set_conn_state(conn_data, REQUEST);
             break;
-		}
-	}
+
+        // 处理查询结果集
+        case RESPONSE_TABULAR:
+            mysql_dissect_result_header(buf, conn_data);
+            break;
+
+        case FIELD_PACKET:
+        case RESPONSE_SHOW_FIELDS:
+        case RESPONSE_PREPARE:
+        case PREPARED_PARAMETERS:
+            mysql_dissect_field_packet(buf, conn_data);
+            break;
+
+        case ROW_PACKET:
+            // offset = mysql_dissect_row_packet(tvb, offset, tree);
+            break;
+
+        case PREPARED_FIELDS:
+            // offset = mysql_dissect_field_packet(tvb, offset, tree, conn_data);
+            break;
+
+        case AUTH_SWITCH_REQUEST:
+            // offset = mysql_dissect_auth_switch_request(tvb, offset, tree, conn_data);
+            break;
+
+        default:
+            // ti = proto_tree_add_item(tree, hf_mysql_payload, tvb, offset, -1, ENC_NA);
+            // expert_add_info(ti, &ei_mysql_unknown_response);
+            // offset += tvb_reported_length_remaining(tvb, offset);
+            // mysql_set_conn_state(conn_data, UNDEFINED);
+            break;
+        }
+    }
 }
 
 static void
 mysql_dissect_result_header(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
-    LOG_INFO("TABULAR");	
+    LOG_INFO("Tabular");
     uint64_t num_fields = buf_readFLE(buf, NULL, NULL);
     LOG_INFO("num fields %llu", num_fields);
-    if (buf_readable(buf)) {
-    	uint64_t extra = buf_readFLE(buf, NULL, NULL);
+    if (buf_readable(buf))
+    {
+        uint64_t extra = buf_readFLE(buf, NULL, NULL);
         LOG_INFO("extra %llu", extra);
     }
 
-	if (num_fields) {
-		mysql_set_conn_state(conn_data, FIELD_PACKET);
-	} else {
-		mysql_set_conn_state(conn_data, ROW_PACKET);
-	}
+    if (num_fields)
+    {
+        mysql_set_conn_state(conn_data, FIELD_PACKET);
+    }
+    else
+    {
+        mysql_set_conn_state(conn_data, ROW_PACKET);
+    }
 }
 
 static void
 mysql_dissect_ok_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
-	LOG_INFO("OK");
-	
-	uint64_t affected_rows = buf_readFLE(buf, NULL, NULL);
-	LOG_INFO("affected rows %llu", affected_rows);
+    LOG_INFO("OK");
 
-	uint64_t insert_id = buf_readFLE(buf, NULL, NULL);
-	if (insert_id) {
-		LOG_INFO("insert id %llu", insert_id);
-	}
+    uint64_t affected_rows = buf_readFLE(buf, NULL, NULL);
+    LOG_INFO("affected rows %llu", affected_rows);
+
+    uint64_t insert_id = buf_readFLE(buf, NULL, NULL);
+    if (insert_id)
+    {
+        LOG_INFO("insert id %llu", insert_id);
+    }
 
     uint16_t server_status = 0;
-    if (buf_readable(buf)) {
+    if (buf_readable(buf))
+    {
         server_status = buf_readInt16LE(buf);
         LOG_INFO("Server Status 0x%04x", server_status);
-        
+
         /* 4.1+ protocol only: 2 bytes number of warnings */
-		if (conn_data->clnt_caps & conn_data->srv_caps & MYSQL_CAPS_CU) {
+        if (conn_data->clnt_caps & conn_data->srv_caps & MYSQL_CAPS_CU)
+        {
             uint16_t warn_num = buf_readInt16LE(buf);
             LOG_INFO("Server Warnings %d", warn_num);
         }
     }
 
-	if (conn_data->clnt_caps_ext & MYSQL_CAPS_ST) {
-        if (buf_readable(buf)) {
-			int length;
+    if (conn_data->clnt_caps_ext & MYSQL_CAPS_ST)
+    {
+        if (buf_readable(buf))
+        {
+            int length;
 
             int lenstr = buf_readFLE(buf, NULL, NULL);
-			/* first read the optional message */
-			if (lenstr) {
+            /* first read the optional message */
+            if (lenstr)
+            {
                 buf_readStr(buf, g_buf, lenstr);
                 LOG_INFO("Session Track Message %s", g_buf);
-			}
+            }
 
-			/* session state tracking */
-			if (server_status & MYSQL_STAT_SESSION_STATE_CHANGED) {
+            /* session state tracking */
+            if (server_status & MYSQL_STAT_SESSION_STATE_CHANGED)
+            {
                 uint64_t session_track_length = buf_readFLE(buf, NULL, NULL);
                 LOG_INFO("Session Track Length %llu", session_track_length);
 
-				while (session_track_length > 0) {
-					length =  mysql_dissect_session_tracker_entry(buf);
-					session_track_length -= length;
-				}
-			}
+                while (session_track_length > 0)
+                {
+                    length = mysql_dissect_session_tracker_entry(buf);
+                    session_track_length -= length;
+                }
+            }
         }
-	} else {
-		/* optional: message string */
-        if (buf_readable(buf)) {
+    }
+    else
+    {
+        /* optional: message string */
+        if (buf_readable(buf))
+        {
             buf_readCStr(buf, g_buf, BUFSZ);
             LOG_INFO("Message %s", g_buf);
         }
-	}
+    }
 
-	mysql_set_conn_state(conn_data, REQUEST);
+    mysql_set_conn_state(conn_data, REQUEST);
 }
 
 static void
-mysql_dissect_field_packet(struct buffer* buf, mysql_conn_data_t *conn_data)
+mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
-    char* str;
-    buf_readFLEStr(buf, &str); LOG_INFO("catalog %s", str); free(str);
-    buf_readFLEStr(buf, &str); LOG_INFO("db %s", str); free(str);
-    buf_readFLEStr(buf, &str); LOG_INFO("table %s", str); free(str);
-    buf_readFLEStr(buf, &str); LOG_INFO("org_table %s", str); free(str);
-    buf_readFLEStr(buf, &str); LOG_INFO("name %s", str); free(str);
-    buf_readFLEStr(buf, &str); LOG_INFO("org_name %s", str); free(str);
+    char *str;
+    buf_readFLEStr(buf, &str);
+    LOG_INFO("catalog %s", str);
+    free(str);
+    buf_readFLEStr(buf, &str);
+    LOG_INFO("db %s", str);
+    free(str);
+    buf_readFLEStr(buf, &str);
+    LOG_INFO("table %s", str);
+    free(str);
+    buf_readFLEStr(buf, &str);
+    LOG_INFO("org_table %s", str);
+    free(str);
+    buf_readFLEStr(buf, &str);
+    LOG_INFO("name %s", str);
+    free(str);
+    buf_readFLEStr(buf, &str);
+    LOG_INFO("org_name %s", str);
+    free(str);
 
     buf_retrieve(buf, 1);
 
@@ -1327,37 +1388,36 @@ mysql_dissect_field_packet(struct buffer* buf, mysql_conn_data_t *conn_data)
 
     // TODO !!!!
 
+    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_catalog);
+    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_db);
+    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_table);
+    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_org_table);
+    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_name);
+    // offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_org_name);
+    // offset +=1; /* filler */
 
-	// offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_catalog);
-	// offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_db);
-	// offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_table);
-	// offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_org_table);
-	// offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_name);
-	// offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_org_name);
-	// offset +=1; /* filler */
+    // proto_tree_add_item(tree, hf_mysql_fld_charsetnr, tvb, offset, 2, ENC_LITTLE_ENDIAN);
+    // offset += 2; /* charset */
 
-	// proto_tree_add_item(tree, hf_mysql_fld_charsetnr, tvb, offset, 2, ENC_LITTLE_ENDIAN);
-	// offset += 2; /* charset */
+    // proto_tree_add_item(tree, hf_mysql_fld_length, tvb, offset, 4, ENC_LITTLE_ENDIAN);
+    // offset += 4; /* length */
 
-	// proto_tree_add_item(tree, hf_mysql_fld_length, tvb, offset, 4, ENC_LITTLE_ENDIAN);
-	// offset += 4; /* length */
+    // proto_tree_add_item(tree, hf_mysql_fld_type, tvb, offset, 1, ENC_NA);
+    // offset += 1; /* type */
 
-	// proto_tree_add_item(tree, hf_mysql_fld_type, tvb, offset, 1, ENC_NA);
-	// offset += 1; /* type */
+    // proto_tree_add_bitmask_with_flags(tree, tvb, offset, hf_mysql_fld_flags, ett_field_flags, mysql_fld_flags, ENC_LITTLE_ENDIAN, BMT_NO_APPEND);
+    // offset += 2; /* flags */
 
-	// proto_tree_add_bitmask_with_flags(tree, tvb, offset, hf_mysql_fld_flags, ett_field_flags, mysql_fld_flags, ENC_LITTLE_ENDIAN, BMT_NO_APPEND);
-	// offset += 2; /* flags */
+    // proto_tree_add_item(tree, hf_mysql_fld_decimals, tvb, offset, 1, ENC_NA);
+    // offset += 1; /* decimals */
 
-	// proto_tree_add_item(tree, hf_mysql_fld_decimals, tvb, offset, 1, ENC_NA);
-	// offset += 1; /* decimals */
+    // offset += 2; /* filler */
 
-	// offset += 2; /* filler */
-
-	// /* default (Only use for show fields) */
-	// if (tree && tvb_reported_length_remaining(tvb, offset) > 0) {
-	// 	offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_default);
-	// }
-	// return offset;
+    // /* default (Only use for show fields) */
+    // if (tree && tvb_reported_length_remaining(tvb, offset) > 0) {
+    // 	offset = mysql_field_add_lestring(tvb, offset, tree, hf_mysql_fld_default);
+    // }
+    // return offset;
 }
 
 /*
@@ -1366,18 +1426,20 @@ mysql_dissect_field_packet(struct buffer* buf, mysql_conn_data_t *conn_data)
   return bytes read
 */
 static int
- mysql_dissect_session_tracker_entry(struct buffer *buf) {
-	
-	uint64_t lenstr;
-	uint64_t lenfle;
+mysql_dissect_session_tracker_entry(struct buffer *buf)
+{
+
+    uint64_t lenstr;
+    uint64_t lenfle;
 
     /* session tracker type */
     uint8_t data_type = buf_readInt8(buf);
     uint64_t length = buf_readFLE(buf, &lenfle, NULL); /* complete length of session tracking entry */
     int sz = 1 + lenfle + length;
 
-	switch (data_type) {
-	case 0: /* SESSION_SYSVARS_TRACKER */
+    switch (data_type)
+    {
+    case 0: /* SESSION_SYSVARS_TRACKER */
         lenstr = buf_readFLE(buf, &lenfle, NULL);
         buf_readStr(buf, g_buf, lenstr);
         LOG_INFO("Session Track Sysvar Name %s", g_buf);
@@ -1385,18 +1447,18 @@ static int
         lenstr = buf_readFLE(buf, &lenfle, NULL);
         buf_readStr(buf, g_buf, lenstr);
         LOG_INFO("Session Track Sysvar Value %s", g_buf);
-		break;
-	case 1: /* CURRENT_SCHEMA_TRACKER */
+        break;
+    case 1: /* CURRENT_SCHEMA_TRACKER */
         lenstr = buf_readFLE(buf, &lenfle, NULL);
         buf_readStr(buf, g_buf, lenstr);
         LOG_INFO("Session Track Sysvar Schema %s", g_buf);
-		break;
-	case 2: /* SESSION_STATE_CHANGE_TRACKER */
+        break;
+    case 2: /* SESSION_STATE_CHANGE_TRACKER */
         LOG_INFO("Session Track State Change");
-		break;
-	default: /* unsupported types skipped */
+        break;
+    default: /* unsupported types skipped */
         LOG_INFO("UnSupported Session Track Types");
-	}
+    }
 
-	return sz;
+    return sz;
 }

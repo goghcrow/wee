@@ -9,10 +9,10 @@
     fprintf(stderr, "\x1B[1;32m" fmt "\x1B[0m\n", ##__VA_ARGS__);
 
 #define LOG_ERROR(fmt, ...) \
-    fprintf(stderr, "\x1B[1;31m[ERROR] " fmt "\x1B[0m\n", ##__VA_ARGS__);
+    fprintf(stderr, "\x1B[1;31m" fmt "\x1B[0m\n", ##__VA_ARGS__);
 
 #define PANIC(fmt, ...)                                                                                                     \
-    fprintf(stderr, "\x1B[1;31m[PANIC] " fmt "\x1B[0m in function %s %s:%d\n", ##__VA_ARGS__, __func__, __FILE__, __LINE__); \
+    fprintf(stderr, "\x1B[1;31m" fmt "\x1B[0m in function %s %s:%d\n", ##__VA_ARGS__, __func__, __FILE__, __LINE__); \
     exit(1);
 
 
