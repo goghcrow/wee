@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 #define LOG_INFO(fmt, ...) \
-    fprintf(stderr, "\x1B[1;32m[INFO] " fmt "\x1B[0m\n", ##__VA_ARGS__);
+    fprintf(stderr, "\x1B[1;32m" fmt "\x1B[0m\n", ##__VA_ARGS__);
 
 #define LOG_ERROR(fmt, ...) \
     fprintf(stderr, "\x1B[1;31m[ERROR] " fmt "\x1B[0m\n", ##__VA_ARGS__);

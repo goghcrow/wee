@@ -440,17 +440,58 @@ int16_t buf_readInt16LE(struct buffer *buf)
     return x;
 }
 
-// 读取 null 结尾 str 一般长度比较短, 这里内部直接申请内存了
-// 外部负责释放
-char *buf_readCStr(struct buffer *buf)
+char *buf_readCStr(struct buffer *buf, char *str, int sz)
 {
+    int sz1;
     const char *eos = buf_findChar(buf, '\0');
+
     if (eos == NULL)
     {
-        eos = buf_peek(buf) + buf_readable(buf) - 1;
+        sz1 = buf_readable(buf) + 1;
+    }
+    else
+    {
+        sz1 = eos - buf_peek(buf) + 1;
     }
 
-    int sz = eos - buf_peek(buf) + 1;
+    if (sz < sz1)
+    {
+        return NULL;
+    }
+
+    memcpy(str, buf_peek(buf), sz);
+    buf_retrieve(buf, sz1);
+    return str;
+}
+
+char *buf_readStr(struct buffer *buf, char *str, int sz)
+{
+    if (buf_readable(buf) < sz)
+    {
+        sz = buf_readable(buf);
+    }
+
+    memcpy(str, buf_peek(buf), sz);
+    str[sz] = '\0';
+
+    buf_retrieve(buf, sz);
+    return str;
+}
+
+char *buf_dupCStr(struct buffer *buf)
+{
+    int sz;
+    const char *eos = buf_findChar(buf, '\0');
+
+    if (eos == NULL)
+    {
+        sz = buf_readable(buf) + 1;
+    }
+    else
+    {
+        sz = eos - buf_peek(buf) + 1;
+    }
+
     char *str = calloc(sz, 1);
     if (str == NULL)
     {
@@ -462,15 +503,12 @@ char *buf_readCStr(struct buffer *buf)
     return str;
 }
 
-// 外部负责释放
-char *buf_readStr(struct buffer *buf, int sz)
+char *buf_dupStr(struct buffer *buf, int sz)
 {
-    if (sz <= 0)
+    if (buf_readable(buf) < sz)
     {
-        return NULL;
+        sz = buf_readable(buf);
     }
-
-    assert(buf_readable(buf) >= sz);
     char *str = malloc(sz + 1);
     if (str == NULL)
     {

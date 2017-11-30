@@ -80,9 +80,11 @@ int32_t buf_readInt32LE(struct buffer *buf);
 int32_t buf_readInt32LE24(struct buffer *buf); // 供 mysql 协议使用的鬼畜 encode
 int16_t buf_readInt16LE(struct buffer *buf);
 
-// 需要检查返回结果, 自行释放内存
-char* buf_readCStr(struct buffer *buf);
-char* buf_readStr(struct buffer *buf, int sz);
+
+char *buf_readCStr(struct buffer *buf, char *str, int sz);
+char *buf_readStr(struct buffer *buf, char *str, int sz);
+char* buf_dupCStr(struct buffer *buf);
+char* buf_dupStr(struct buffer *buf, int sz);
 
 size_t buf_internalCapacity(struct buffer *buf);
 ssize_t buf_readFd(struct buffer *buf, int fd, int *errno_);
