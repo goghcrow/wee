@@ -15,7 +15,8 @@
 TODO:
 1. sannitizer 测试
 2. charset format
-
+3. 处理掉 buf_readCStr buf_readStr
+3. 比较ip大小, 做一个会话struct, 挂一个 mysql_conn_data, 两个方向的 buffer
 
 */
 
@@ -31,8 +32,18 @@ static QUEUE PORT_QUEUE[PORT_QUEUE_SIZE];
 
 static int16_t mysql_server_port;
 static struct mysql_conn_data g_conn_data;
+// #define BUFDZ MYSQL_MAX_PACKET_LEN
 #define BUFSZ 1024 * 1024
 static char g_buf[BUFSZ];
+
+
+// TODO
+struct mysql_session {
+    // src, dst ip port
+    // src buf, dst buf
+    // mysql_conn_data
+
+};
 
 struct conn
 {
