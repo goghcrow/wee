@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <sys/uio.h>
 #ifndef _GNU_SOURCE
@@ -15,58 +16,55 @@ struct buffer
     size_t read_idx;
     size_t write_idx;
     size_t sz;
-    char *buf;
     size_t p_sz;
+    char *buf;
+    size_t refcount;
+    struct buffer *from;
 };
+
+#define ASSERT_WRITE(buf) assert(!buf_writeLocked(buf))
 
 struct buffer *buf_create_ex(size_t size, size_t prepend_size)
 {
+    assert(size > 0);
     assert(prepend_size >= 0);
 
-    if (size == 0)
-    {
-        size = 1024;
-    }
     size_t sz = size + prepend_size;
-    struct buffer *buf = malloc(sizeof(*buf));
-    assert(buf);
-    memset(buf, 0, sizeof(*buf));
-    buf->buf = malloc(sz);
-    assert(buf->buf);
-    memset(buf->buf, 0, sz);
+    struct buffer *buf = calloc(1, sizeof(*buf));
+    if (buf == NULL)
+    {
+        return NULL;
+    }
+    buf->buf = calloc(1, sz);
+    if (buf->buf == NULL)
+    {
+        free(buf);
+        return NULL;
+    }
     buf->sz = sz;
     buf->read_idx = prepend_size;
     buf->write_idx = prepend_size;
     buf->p_sz = prepend_size;
+    buf->refcount = 0;
+    buf->from = NULL;
     return buf;
 }
 
 void buf_release(struct buffer *buf)
 {
-    free(buf->buf);
+    // 可以嵌套创建readonlyView, 都要检查 refcount
+    assert(buf->refcount == 0);
+
+    // 只读视图
+    if (buf->from)
+    {
+        buf->from->refcount--;
+    }
+    else
+    {
+        free(buf->buf);
+    }
     free(buf);
-}
-
-size_t buf_getReadIndex(struct buffer *buf)
-{
-    return buf->read_idx;
-}
-
-void buf_setReadIndex(struct buffer *buf, size_t read_idx)
-{
-    assert(read_idx > 0 && read_idx <= buf->write_idx);
-    buf->read_idx = read_idx;
-}
-
-size_t buf_getWriteIndex(struct buffer *buf)
-{
-    return buf->write_idx;
-}
-
-void buf_setWriteIndex(struct buffer *buf, size_t write_idx)
-{
-    assert(write_idx >= buf->read_idx && write_idx < buf->sz);
-    buf->write_idx = write_idx;
 }
 
 size_t buf_readable(const struct buffer *buf)
@@ -77,6 +75,11 @@ size_t buf_readable(const struct buffer *buf)
 size_t buf_writable(const struct buffer *buf)
 {
     return buf->sz - buf->write_idx;
+}
+
+size_t buf_internalCapacity(struct buffer *buf)
+{
+    return buf->sz;
 }
 
 size_t buf_prependable(const struct buffer *buf)
@@ -102,6 +105,7 @@ void buf_has_written(struct buffer *buf, size_t len)
 
 void buf_unwrite(struct buffer *buf, size_t len)
 {
+    ASSERT_WRITE(buf);
     assert(len <= buf_readable(buf));
     buf->write_idx -= len;
 }
@@ -182,11 +186,10 @@ void buf_retrieveInt8(struct buffer *buf)
 
 static void buf_swap(struct buffer *buf, size_t nsz)
 {
-    // FIX nsz > buf->size realloc ?
+    // TODO nsz > buf->size realloc ?
     assert(nsz >= buf_readable(buf));
-    void *nbuf = malloc(nsz);
+    void *nbuf = calloc(1, nsz);
     assert(nbuf);
-    memset(nbuf, 0, nsz);
     memcpy(nbuf + buf->p_sz, buf_peek(buf), buf_readable(buf));
     free(buf->buf);
     buf->buf = nbuf;
@@ -214,6 +217,7 @@ static void buf_makeSpace(struct buffer *buf, size_t len)
 
 void buf_ensureWritable(struct buffer *buf, size_t len)
 {
+    ASSERT_WRITE(buf);
     if (buf_writable(buf) < len)
     {
         buf_makeSpace(buf, len);
@@ -223,6 +227,7 @@ void buf_ensureWritable(struct buffer *buf, size_t len)
 
 void buf_append(struct buffer *buf, const char *data, size_t len)
 {
+    ASSERT_WRITE(buf);
     buf_ensureWritable(buf, len);
     memcpy(buf_beginWrite(buf), data, len);
     buf_has_written(buf, len);
@@ -237,6 +242,7 @@ void buf_prepend(struct buffer *buf, const char *data, size_t len)
 
 void buf_shrink(struct buffer *buf, size_t reserve)
 {
+    ASSERT_WRITE(buf);
     buf_swap(buf, buf->p_sz + buf_readable(buf) + reserve);
 }
 
@@ -460,7 +466,14 @@ char *buf_readCStr(struct buffer *buf, char *str, int sz)
     }
 
     memcpy(str, buf_peek(buf), sz);
-    buf_retrieve(buf, sz1);
+    if (eos == NULL)
+    {
+        buf_retrieve(buf, sz1 - 1);
+    }
+    else
+    {
+        buf_retrieve(buf, sz1);
+    }
     return str;
 }
 
@@ -499,7 +512,14 @@ char *buf_dupCStr(struct buffer *buf)
     }
 
     memcpy(str, buf_peek(buf), sz);
-    buf_retrieve(buf, sz);
+    if (eos == NULL)
+    {
+        buf_retrieve(buf, sz - 1);
+    }
+    else
+    {
+        buf_retrieve(buf, sz);
+    }
     return str;
 }
 
@@ -522,13 +542,9 @@ char *buf_dupStr(struct buffer *buf, int sz)
     return str;
 }
 
-size_t buf_internalCapacity(struct buffer *buf)
-{
-    return buf->sz;
-}
-
 ssize_t buf_readFd(struct buffer *buf, int fd, int *errno_)
 {
+    ASSERT_WRITE(buf);
     char extrabuf[65535];
     struct iovec vec[2];
     size_t writable = buf_writable(buf);
@@ -554,4 +570,61 @@ ssize_t buf_readFd(struct buffer *buf, int fd, int *errno_)
     }
 
     return n;
+}
+
+bool buf_writeLocked(struct buffer *buf)
+{
+    return buf_isReadonlyView(buf) || buf->refcount > 0;
+}
+
+bool buf_isReadonlyView(struct buffer *buf)
+{
+    return buf->from != NULL;
+}
+
+struct buffer *buf_readonlyView(struct buffer *buf, int sz)
+{
+    assert(sz > 0);
+    if (sz > buf_readable(buf))
+    {
+        sz = buf_readable(buf);
+    }
+
+    struct buffer *rbuf = calloc(1, sizeof(*buf));
+    if (rbuf == NULL)
+    {
+        return NULL;
+    }
+    rbuf->buf = buf->buf + buf->read_idx; // buf_peek(buf)
+    rbuf->sz = sz;
+    rbuf->read_idx = 0;
+    rbuf->write_idx = sz;
+    rbuf->p_sz = 0;
+    rbuf->refcount = 0;
+    rbuf->from = buf;
+    buf->refcount++;
+    return rbuf;
+}
+
+size_t buf_getReadIndex(struct buffer *buf)
+{
+    return buf->read_idx;
+}
+
+void buf_setReadIndex(struct buffer *buf, size_t read_idx)
+{
+    assert(read_idx > 0 && read_idx <= buf->write_idx);
+    buf->read_idx = read_idx;
+}
+
+size_t buf_getWriteIndex(struct buffer *buf)
+{
+    return buf->write_idx;
+}
+
+void buf_setWriteIndex(struct buffer *buf, size_t write_idx)
+{
+    ASSERT_WRITE(buf);
+    assert(write_idx >= buf->read_idx && write_idx < buf->sz);
+    buf->write_idx = write_idx;
 }

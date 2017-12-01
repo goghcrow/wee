@@ -996,7 +996,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
         buf_readCStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql User %s", g_buf);
 
-        char *mysql_passwd;
+        char *mysql_passwd = NULL;
         if (conn_data->clnt_caps & MYSQL_CAPS_SC)
         {
             int len = buf_readInt8(buf);
@@ -1009,12 +1009,13 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
         // LOG_INFO("Mysql Password %s", mysql_passwd);
 
         buf_readCStr(buf, g_buf, BUFSZ);
-        LOG_INFO("Mysql Schema %s", mysql_passwd);
+        LOG_INFO("Mysql Schema %s", g_buf);
 
         if (buf_readable(buf))
         {
             uint8_t charset = buf_readInt8(buf);
             buf_retrieve(buf, 1);
+            // LOG_INFO("Mysql Charset "); // TODO fmt
         }
     }
         mysql_set_conn_state(conn_data, RESPONSE_OK);

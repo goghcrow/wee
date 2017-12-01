@@ -162,7 +162,7 @@ void test11()
 
     char *str = malloc(strlen(hello) + 1);
     buf_retrieveAsString(buf, strlen(hello), str);
-    puts(str);
+    // puts(str);
     free(str);
 
     buf_release(buf);
@@ -186,7 +186,7 @@ void test12()
     buf_append(buf, x, 2);
     buf_setWriteIndex(buf, save_idx2);
 
-    printf("%7s\n", buf_peek(buf));
+    // printf("%7s\n", buf_peek(buf));
     buf_release(buf);
 }
 
@@ -226,14 +226,63 @@ void test15()
     struct buffer *buf = buf_create(10);
 
     buf_append(buf, "HELLO\0", 6);
-    char *str = buf_readCStr(buf);
+    char *str = buf_dupCStr(buf);
     assert(str);
     assert(strcmp("HELLO\0", str) == 0);
     assert(buf_readable(buf) == 0);
+    free(str);
 
     buf_append(buf, "HELLO", 5);
-    str = buf_readCStr(buf);
+    str = buf_dupCStr(buf);
     assert(buf_readable(buf) == 0);
+    free(str);
+    buf_release(buf);
+}
+
+void test16()
+{
+    static char str[10];
+    struct buffer *buf = buf_create(10);
+
+    buf_append(buf, "HELLO\0", 6);
+    buf_readCStr(buf, str, 10);
+    assert(strncmp("HELLO\0", str, 6) == 0);
+    assert(buf_readable(buf) == 0);
+
+    buf_append(buf, "HELLO", 5);
+    buf_readCStr(buf, str, 10);
+    assert(buf_readable(buf) == 0);
+    buf_release(buf);
+}
+
+void test17()
+{
+    struct buffer *buf = buf_create(10);
+    buf_append(buf, "HELLO\0", 6);
+    buf_retrieve(buf, 1);
+
+    assert(buf_writeLocked(buf) == false);
+    assert(buf_isReadonlyView(buf) == false);
+
+    struct buffer *rbuf1 = buf_readonlyView(buf, buf_readable(buf));
+    struct buffer *rbuf2 = buf_readonlyView(buf, 2);
+    struct buffer *rbuf3 = buf_readonlyView(rbuf1, 2);
+
+    assert(buf_peek(rbuf3) == buf_peek(buf));
+
+    assert(buf_writeLocked(buf) == true);
+    assert(buf_isReadonlyView(buf) == false);
+
+    assert(buf_writeLocked(rbuf1) == true);
+    assert(buf_isReadonlyView(rbuf1) == true);
+
+    buf_release(rbuf3);
+    assert(buf_writeLocked(buf) == true);
+    buf_release(rbuf2);
+    assert(buf_writeLocked(buf) == true);
+    buf_release(rbuf1);
+
+    assert(buf_writeLocked(buf) == false);
 
     buf_release(buf);
 }
@@ -255,5 +304,7 @@ int main(void)
     test13();
     test14();
     test15();
+    test16();
+    test17();
     return 0;
 }

@@ -2,6 +2,7 @@
 #define BUFFER_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>    /*size_t*/
 #include <sys/types.h> /*ssize_t*/
 
@@ -14,6 +15,7 @@ struct buffer;
 struct buffer *buf_create_ex(size_t size, size_t prepend_size);
 void buf_release(struct buffer *buf);
 
+size_t buf_internalCapacity(struct buffer *buf);
 size_t buf_readable(const struct buffer *buf);
 size_t buf_writable(const struct buffer *buf);
 size_t buf_prependable(const struct buffer *buf);
@@ -80,17 +82,22 @@ int32_t buf_readInt32LE(struct buffer *buf);
 int32_t buf_readInt32LE24(struct buffer *buf); // 供 mysql 协议使用的鬼畜 encode
 int16_t buf_readInt16LE(struct buffer *buf);
 
-
 char *buf_readCStr(struct buffer *buf, char *str, int sz);
 char *buf_readStr(struct buffer *buf, char *str, int sz);
 char* buf_dupCStr(struct buffer *buf);
 char* buf_dupStr(struct buffer *buf, int sz);
 
-size_t buf_internalCapacity(struct buffer *buf);
 ssize_t buf_readFd(struct buffer *buf, int fd, int *errno_);
 
+// 顾名思义, 只读视图, 可嵌套创建
+// 创建只读视图后, 被创建只读视图的 buffer 锁定, 只能读不能写
+// 等到 所有从其创建的只读视图全部 Release 后恢复
+struct buffer* buf_readonlyView(struct buffer *buf, int sz);
+bool buf_writeLocked(struct buffer *buf);
+bool buf_isReadonlyView(struct buffer *buf);
 
 // private
+// 危险 api, 参数 buffer_test.c test12
 size_t buf_getReadIndex(struct buffer *buf);
 void buf_setReadIndex(struct buffer *buf, size_t read_idx);
 size_t buf_getWriteIndex(struct buffer *buf);

@@ -6,3 +6,5 @@ dubbo_ab
 */.DS_Store
 lua*
 tmp
+buffer_test
+mysql_sniff
