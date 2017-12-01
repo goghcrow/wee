@@ -18,8 +18,13 @@ struct buffer
     size_t sz;
     size_t p_sz;
     char *buf;
+
+    // 以下字段支持只读视图
     size_t refcount;
-    struct buffer *from;
+    // 只读视图指向来源视图
+    struct buffer *src;
+    // 缓存一个只读视图
+    struct buffer *cache;
 };
 
 #define ASSERT_WRITE(buf) assert(!buf_writeLocked(buf))
@@ -46,7 +51,7 @@ struct buffer *buf_create_ex(size_t size, size_t prepend_size)
     buf->write_idx = prepend_size;
     buf->p_sz = prepend_size;
     buf->refcount = 0;
-    buf->from = NULL;
+    buf->src = NULL;
     return buf;
 }
 
@@ -55,16 +60,31 @@ void buf_release(struct buffer *buf)
     // 可以嵌套创建readonlyView, 都要检查 refcount
     assert(buf->refcount == 0);
 
-    // 只读视图
-    if (buf->from)
+    if (buf->src)
     {
-        buf->from->refcount--;
+        // 只读视图
+        buf->src->refcount--;
+
+        // 缓存 只读视图, 为 mysql 协议解析做的优化
+        if (!buf->src->cache)
+        {
+            buf->src->cache = buf;
+        }
+        else
+        {
+            free(buf);
+        }
     }
     else
     {
+        // 常规 buffer
         free(buf->buf);
+        if (buf->cache)
+        {
+            free(buf->cache);
+        }
+        free(buf);
     }
-    free(buf);
 }
 
 size_t buf_readable(const struct buffer *buf)
@@ -579,7 +599,7 @@ bool buf_writeLocked(struct buffer *buf)
 
 bool buf_isReadonlyView(struct buffer *buf)
 {
-    return buf->from != NULL;
+    return buf->src != NULL;
 }
 
 struct buffer *buf_readonlyView(struct buffer *buf, int sz)
@@ -590,18 +610,30 @@ struct buffer *buf_readonlyView(struct buffer *buf, int sz)
         sz = buf_readable(buf);
     }
 
-    struct buffer *rbuf = calloc(1, sizeof(*buf));
-    if (rbuf == NULL)
+    struct buffer *rbuf;
+
+    if (buf->cache)
     {
-        return NULL;
+        memset(buf->cache, 0, sizeof(*(buf->cache)));
+        rbuf = buf->cache;
+        buf->cache = NULL;
     }
+    else
+    {
+        rbuf = calloc(1, sizeof(*buf));
+        if (rbuf == NULL)
+        {
+            return NULL;
+        }
+    }
+
     rbuf->buf = buf->buf + buf->read_idx; // buf_peek(buf)
     rbuf->sz = sz;
     rbuf->read_idx = 0;
     rbuf->write_idx = sz;
     rbuf->p_sz = 0;
     rbuf->refcount = 0;
-    rbuf->from = buf;
+    rbuf->src = buf;
     buf->refcount++;
     return rbuf;
 }

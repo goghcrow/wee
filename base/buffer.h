@@ -92,6 +92,7 @@ ssize_t buf_readFd(struct buffer *buf, int fd, int *errno_);
 // 顾名思义, 只读视图, 可嵌套创建
 // 创建只读视图后, 被创建只读视图的 buffer 锁定, 只能读不能写
 // 等到 所有从其创建的只读视图全部 Release 后恢复
+// 缓存了一个只读视图, 应对频繁创建删除
 struct buffer* buf_readonlyView(struct buffer *buf, int sz);
 bool buf_writeLocked(struct buffer *buf);
 bool buf_isReadonlyView(struct buffer *buf);

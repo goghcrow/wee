@@ -11,6 +11,14 @@
 #include "../base/endian.h"
 #include "../base/queue.h"
 
+/*
+TODO:
+1. sannitizer 测试
+2. charset format
+
+
+*/
+
 #if !defined(UNUSED)
 #define UNUSED(x) ((void)(x))
 #endif
@@ -23,10 +31,8 @@ static QUEUE PORT_QUEUE[PORT_QUEUE_SIZE];
 
 static int16_t mysql_server_port;
 static struct mysql_conn_data g_conn_data;
-#define BUFSZ 8192
+#define BUFSZ 1024 * 1024
 static char g_buf[BUFSZ];
-// 用来存在 每个 Mysql Packet
-static struct buffer *once_pkt_buf;
 
 struct conn
 {
@@ -259,12 +265,8 @@ void pkt_handle(void *ud,
         uint8_t pkt_num = buf_readInt8(buf);
         LOG_INFO("%s:%d > %s:%d pkt_sz %d, pkt_no %d", s_ip_buf, s_port, d_ip_buf, s_port, pkt_sz, pkt_num);
 
-        // 这里为简化逻辑处理, 每个 Mysql Packet 使用单独 buffer 对象, Copy 一份数据
-        // 对于处理不了的 packet 可以直接忽略处理~ 不影响后续包
-
-        // 重置 once_pkt_buf, 从 buf 转义数据到 once_pkt_buf
-        buf_retrieveAll(once_pkt_buf);
-        buf_append(once_pkt_buf, buf_peek(buf), pkt_sz);
+        // 这里不用担心频繁创建只读视图, 内部有缓存
+        struct buffer *rbuf = buf_readonlyView(buf, pkt_sz);
         buf_retrieve(buf, pkt_sz);
 
         // TODO 检测是否是 SSL !!!
@@ -274,11 +276,11 @@ void pkt_handle(void *ud,
         {
             if (pkt_num == 0 && g_conn_data.state == UNDEFINED)
             {
-                mysql_dissect_greeting(once_pkt_buf, &g_conn_data);
+                mysql_dissect_greeting(rbuf, &g_conn_data);
             }
             else
             {
-                mysql_dissect_response(once_pkt_buf, &g_conn_data);
+                mysql_dissect_response(rbuf, &g_conn_data);
             }
         }
         else
@@ -286,7 +288,7 @@ void pkt_handle(void *ud,
             // TODO 这里 有问题, 暂时没进入该分支 !!!!, 抓取不到 login
             if (g_conn_data.state == LOGIN && (pkt_num == 1 || (pkt_num == 2 && is_ssl)))
             {
-                mysql_dissect_login(once_pkt_buf, &g_conn_data);
+                mysql_dissect_login(rbuf, &g_conn_data);
                 if (pkt_num == 2 && is_ssl)
                 {
                     PANIC("SLL NOT SUPPORT");
@@ -302,9 +304,10 @@ void pkt_handle(void *ud,
             }
             else
             {
-                mysql_dissect_request(once_pkt_buf, &g_conn_data);
+                mysql_dissect_request(rbuf, &g_conn_data);
             }
         }
+        buf_release(rbuf);
     }
 
     if (buf_internalCapacity(buf) > 1024 * 1024)
@@ -326,14 +329,11 @@ void init()
     g_conn_data.frame_start_ssl = 0;
     g_conn_data.frame_start_compressed = 0;
     g_conn_data.compressed_state = MYSQL_COMPRESS_NONE;
-
-    once_pkt_buf = buf_create(BUFSZ);
 }
 
 void release()
 {
     pq_release();
-    buf_release(once_pkt_buf);
 }
 
 int main(int argc, char **argv)
@@ -368,6 +368,39 @@ int main(int argc, char **argv)
     }
     return 0;
 }
+
+static const char *
+val_to_str(const struct val_str *val_strs, uint32_t val, char *def)
+{
+    struct val_str *p = (struct val_str *)val_strs - 1;
+    while ((++p)->str)
+    {
+        if (p->val == val)
+        {
+            return p->str;
+        }
+    }
+    return def;
+}
+
+static const char *
+mysql_get_command(uint32_t val, char *def)
+{
+    return val_to_str(mysql_command_vals, val, def);
+}
+
+static const char *
+mysql_get_charset(uint32_t val, char *def)
+{
+    return val_to_str(mysql_collation_vals, val, def);
+}
+
+static const char*
+mysql_get_field_type(uint32_t val, char *def) {
+    return val_to_str(type_constants, val, def);
+}
+
+// mysql_collation_vals
 
 static int buf_strsize(struct buffer *buf)
 {
@@ -707,11 +740,12 @@ mysql_dissect_greeting(struct buffer *buf, mysql_conn_data_t *conn_data)
 
     /* 1 byte Charset */
     int8_t charset = buf_readInt8(buf);
-    LOG_INFO("Server Charset 0x%02x", charset); // TODO fmt charset
+    LOG_INFO("Server Charset [%s](0x%02x)", mysql_get_charset(charset, "未知编码"), charset);
+    
 
     /* 2 byte ServerStatus */
     int16_t server_status = buf_readInt16LE(buf);
-    LOG_INFO("Server Statue 0x%04x", server_status); // TODO fmt charset
+    LOG_INFO("Server Statue 0x%04x", server_status);
 
     /* 2 bytes ExtCAPS */
     conn_data->srv_caps_ext = buf_readInt16LE(buf);
@@ -811,7 +845,7 @@ NullTerminatedString	Client Auth Plugin: e.g. mysql_native_password
 
         /* 1 byte Charset */
         charset = buf_readInt8(buf);
-        LOG_INFO("Client Charset 0x%02x", charset); // TODO fmt
+        LOG_INFO("Client Charset [%s](0x%02x)", mysql_get_charset(charset, "未知编码"), charset);
 
         /* filler 23 bytes */
         buf_retrieve(buf, 23);
@@ -923,7 +957,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     }
 
     int opcode = buf_readInt8(buf);
-    LOG_INFO("Request Opcode 0x%02x %s", opcode, val_to_str(opcode, "Unknown"));
+    LOG_INFO("Request Opcode 0x%02x %s", opcode, mysql_get_command(opcode, "未知命令"));
 
     switch (opcode)
     {
@@ -1015,7 +1049,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
         {
             uint8_t charset = buf_readInt8(buf);
             buf_retrieve(buf, 1);
-            // LOG_INFO("Mysql Charset "); // TODO fmt
+            LOG_INFO("Charset [%s](0x%02x)", mysql_get_charset(charset, "未知编码"), charset);
         }
     }
         mysql_set_conn_state(conn_data, RESPONSE_OK);
@@ -1404,14 +1438,14 @@ mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
 
     buf_retrieve(buf, 1);
 
-    uint16_t charset = buf_readInt16LE(buf); // TODO fmt charset
+    uint16_t charset = buf_readInt16LE(buf);
     uint32_t length = buf_readInt32LE(buf);
-    uint8_t type = buf_readInt8(buf); // TODO fmt type name
+    uint8_t type = buf_readInt8(buf);
     uint16_t flags = buf_readInt16LE(buf);
     uint8_t decimal = buf_readInt8(buf);
-    LOG_INFO("Charset %d", charset);
+    LOG_INFO("Charset [%s](0x%02x)", mysql_get_charset(charset, "未知编码"), charset);
     LOG_INFO("Length %d", length);
-    LOG_INFO("Type %d", type);
+    LOG_INFO("Type [%s](%d)", mysql_get_field_type(type, "未知类型"), type);
     LOG_INFO("Flags 0x%04x", flags);
     LOG_INFO("Decimal %d", decimal);
 
@@ -1475,7 +1509,8 @@ mysql_dissect_row_packet(struct buffer *buf)
     {
         uint8_t is_null;
         uint64_t lelen = buf_readFle(buf, NULL, &is_null);
-        if (is_null) {
+        if (is_null)
+        {
             LOG_INFO("NULL");
         }
         else
