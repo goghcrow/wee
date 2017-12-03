@@ -14,6 +14,12 @@
 
 /*
 TODO:
+
+    // FIX 5.7 EOF 问题
+    // TODO TODO
+    conn_data->num_fields = conn_data->stmt_num_params;
+
+0. 释放 mysql_dissect_response_prepare 申请的内存
 0. 5.7 新协议 有问题 SET NAMES utf8 返回 解析有问题,, 状态不对...读到 ResultSet 了
 0. 加大量 文字注释: http://hutaow.com/blog/2013/11/06/mysql-protocol-analysis/
 1. 处理 mysql 5.7 协议变更, 无 EOF packet
@@ -101,12 +107,6 @@ struct mysql_stmt_data
     uint8_t *param_flags;
 };
 
-// TODO ??
-struct mysql_frame_data
-{
-    mysql_state_t state;
-};
-
 // 按字段类型解析 dissect 预编译语句执行时绑定的值
 typedef struct mysql_exec_dissector
 {
@@ -170,6 +170,7 @@ static void mysql_dissect_exec_double(struct buffer *buf);
 static void mysql_dissect_exec_longlong(struct buffer *buf);
 static void mysql_dissect_exec_null(struct buffer *buf);
 static char mysql_dissect_exec_param(struct buffer *buf, uint8_t param_flags);
+static void mysql_dissect_response_prepare(struct buffer *buf, mysql_conn_data_t *conn_data);
 
 static struct mysql_conn_data *
 mysql_conn_data_create()
@@ -408,7 +409,9 @@ mysql_ss_get(struct mysql_ss *ss, struct tuple4 *t4)
     if (s == NULL)
     {
         return mysql_ss_add_internal(ss, t4);
-    } else {
+    }
+    else
+    {
         return s;
     }
 }
@@ -490,10 +493,14 @@ void pkt_handle(void *ud,
     struct mysql_session *s = mysql_ss_get(ss, &t4);
     struct buffer *buf = mysql_session_getbuf(s, &t4, s_port, &is_response);
 
-    if (is_response) {
-        LOG_ERROR("IS RESPONSE %p", buf);
-    } else {
-        LOG_ERROR("NOT IS RESPONSE %p", buf);
+    // TODO remove
+    if (is_response)
+    {
+        LOG_ERROR("RESPONSE");
+    }
+    else
+    {
+        LOG_ERROR("REQUEST");
     }
 
     buf_append(buf, (const char *)payload, payload_size);
@@ -1291,13 +1298,27 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     case MYSQL_STMT_SEND_LONG_DATA:
     {
         uint32_t mysql_stmt_id = buf_readInt32LE(buf);
-        uint16_t mysql_param = buf_readInt16(buf);
+        khint_t k = kh_get(stmts, conn_data->stmts, mysql_stmt_id);
+        int is_missing = (k == kh_end(conn_data->stmts));
+        if (is_missing)
+        {
+            buf_retrieve(buf, 2);
+        }
+        else
+        {
+            struct mysql_stmt_data *stmt_data = kh_value(conn_data->stmts, mysql_stmt_id);
+            uint16_t data_param = buf_readInt16(buf);
+            if (stmt_data->nparam > data_param)
+            {
+                stmt_data->param_flags[data_param] |= MYSQL_PARAM_FLAG_STREAMED;
+            }
+        }
     }
 
         if (buf_readable(buf))
         {
             buf_readCStr(buf, g_buf, BUFSZ);
-            LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
+            // LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
         }
         mysql_set_conn_state(conn_data, REQUEST);
         break;
@@ -1317,7 +1338,8 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
             {
                 buf_readCStr(buf, g_buf, BUFSZ);
                 // mysql prepare response needed
-                LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
+                // 无元信息, 无法解析 STMT 参数~
+                // LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
             }
         }
         else
@@ -1468,7 +1490,7 @@ OK packet.
         LOG_INFO("Response Code OK 0x%02x", response_code);
         if (conn_data->state == RESPONSE_PREPARE)
         {
-            // mysql_dissect_response_prepare(buf, conn_data);
+            mysql_dissect_response_prepare(buf, conn_data);
         }
         else if (buf_readable(buf) > buf_peekFleLen(buf))
         {
@@ -1525,6 +1547,7 @@ Row result set(Text or Binary) will now be terminated with OK packet.
             2. 也要通过 Fields Count 剩余来判断
             */
 
+            // FIX 5.7 EOF 问题
             if (conn_data->num_fields == 0)
             {
                 mysql_dissect_row_packet(buf);
@@ -1569,7 +1592,8 @@ mysql_dissect_result_header(struct buffer *buf, mysql_conn_data_t *conn_data)
     LOG_INFO("Tabular");
     uint64_t num_fields = buf_readFle(buf, NULL, NULL);
     LOG_INFO("num fields %llu", num_fields);
-    conn_data->num_fields = num_fields; // fix bug
+    // FIX 5.7 EOF 问题
+    conn_data->num_fields = num_fields;
     conn_data->cur_field = 0;
     if (buf_readable(buf))
     {
@@ -1963,4 +1987,56 @@ mysql_dissect_exec_param(struct buffer *buf, uint8_t param_flags)
         dissector_index++;
     }
     return 0;
+}
+
+static void
+mysql_dissect_response_prepare(struct buffer *buf, mysql_conn_data_t *conn_data)
+{
+    /* 0, marker for OK packet */
+    buf_retrieve(buf, 1);
+    uint32_t stmt_id = buf_readInt32LE(buf);
+    conn_data->stmt_num_fields = buf_readInt16LE(buf);
+    conn_data->stmt_num_params = buf_readInt16LE(buf);
+
+    // FIX 5.7 EOF 问题
+    // TODO TODO
+    conn_data->num_fields = conn_data->stmt_num_params;
+
+    // TODO free
+    struct mysql_stmt_data *stmt_data = calloc(1, sizeof(*stmt_data));
+    assert(stmt_data);
+    stmt_data->nparam = conn_data->stmt_num_params;
+
+    int flagsize = (int)(sizeof(uint8_t) * stmt_data->nparam);
+    // TODO free
+    stmt_data->param_flags = (uint8_t *)malloc(flagsize);
+    memset(stmt_data->param_flags, 0, flagsize);
+
+    int absent;
+    khint_t k = kh_put(stmts, conn_data->stmts, stmt_id, &absent);
+    if (!absent)
+    {
+        kh_del(stmts, conn_data->stmts, k);
+    }
+    kh_value(conn_data->stmts, k) = stmt_data;
+
+    /* Filler */
+    buf_retrieve(buf, 1);
+
+    // TODO
+    // uint16_t warn_num = buf_readInt16LE(buf);
+    // LOG_INFO("Warnings %d", warn_num);
+
+    if (conn_data->stmt_num_params > 0)
+    {
+        mysql_set_conn_state(conn_data, PREPARED_PARAMETERS);
+    }
+    else if (conn_data->stmt_num_fields > 0)
+    {
+        mysql_set_conn_state(conn_data, PREPARED_FIELDS);
+    }
+    else
+    {
+        mysql_set_conn_state(conn_data, REQUEST);
+    }
 }
