@@ -14,19 +14,15 @@
 
 /*
 TODO:
-0. 加大量 文字注释: http://hutaow.com/blog/2013/11/06/mysql-protocol-analysis/
 0. 5.7 新协议 有问题 SET NAMES utf8 返回 解析有问题,, 状态不对...读到 ResultSet 了
+0. 加大量 文字注释: http://hutaow.com/blog/2013/11/06/mysql-protocol-analysis/
 1. 处理 mysql 5.7 协议变更, 无 EOF packet
-1. sannitizer 测试
-2. charset format
-3. 处理掉 buf_readCStr buf_readStr
-3. 比较ip大小, 做一个会话struct, 挂一个 mysql_conn_data, 两个方向的 buffer
-4. 支持多端口
-5. 支持 统计 sql 执行时间
 6. 测试 exec 各种类型
 7. 打印 Server 和 Client 的能力
+5. 支持 统计 sql 执行时间
+1. sannitizer 测试
 
-
+OK: 支持多mysql端口
 OK: 测试 新旧 两种协议 同时连接的场景 ~
 用简单的 strmap 处理 ResultSet 结果集?!  string <=> string
 */
@@ -494,6 +490,12 @@ void pkt_handle(void *ud,
     struct mysql_session *s = mysql_ss_get(ss, &t4);
     struct buffer *buf = mysql_session_getbuf(s, &t4, s_port, &is_response);
 
+    if (is_response) {
+        LOG_ERROR("IS RESPONSE %p", buf);
+    } else {
+        LOG_ERROR("NOT IS RESPONSE %p", buf);
+    }
+
     buf_append(buf, (const char *)payload, payload_size);
 
     // 一个 tcp segment 包括 N 个 Mysql Packet
@@ -501,7 +503,7 @@ void pkt_handle(void *ud,
     {
         int32_t pkt_sz = buf_readInt32LE24(buf);
         uint8_t pkt_num = buf_readInt8(buf);
-        LOG_INFO("%s:%d > %s:%d pkt_sz %d, pkt_no %d", s_ip_buf, s_port, d_ip_buf, s_port, pkt_sz, pkt_num);
+        LOG_INFO("%s:%d > %s:%d pkt_sz %d, pkt_no %d", s_ip_buf, s_port, d_ip_buf, d_port, pkt_sz, pkt_num);
 
         // 这里不用担心频繁创建只读视图, 内部有缓存
         struct buffer *rbuf = buf_readonlyView(buf, pkt_sz);
@@ -1459,8 +1461,9 @@ EOF packet.
 参见:https://dev.mysql.com/worklog/task/?id=7766
 if buff[0] == 0 and length of buff is greater than 7 bytes then its an
 OK packet.
+> 9 的逻辑针对旧协议不适用 !!!
     */
-    else if (response_code == 0x00 && buf_readable(buf) > 9)
+    else if (response_code == 0x00 /*&& buf_readable(buf) > 9*/)
     { // OK
         LOG_INFO("Response Code OK 0x%02x", response_code);
         if (conn_data->state == RESPONSE_PREPARE)

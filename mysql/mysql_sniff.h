@@ -7,16 +7,14 @@
 #include "../base/buffer.h"
 #include "../base/khash.h"
 
-
 struct val_str {
     uint32_t      val;
     const char	  *str;
 };
 
-
 #define MYSQL_MAX_PACKET_LEN  	0xFFFFFF
-// #define MYSQL_ERRMSG_SIZE 		512
-// #define MYSQL_DEFAULT_CATEGORY 	"def"
+#define MYSQL_ERRMSG_SIZE 		512
+#define MYSQL_DEFAULT_CATEGORY 	"def"
 
 /* client/server capabilities
  * http://dev.mysql.com/doc/internals/en/capability-flags.html
