@@ -10,177 +10,137 @@
 #include "../base/buffer.h"
 #include "../base/endian.h"
 #include "../base/queue.h"
+#include "../base/khash.h"
 
 /*
 TODO:
+0. 加大量 文字注释: http://hutaow.com/blog/2013/11/06/mysql-protocol-analysis/
+0. 5.7 新协议 有问题 SET NAMES utf8 返回 解析有问题,, 状态不对...读到 ResultSet 了
+1. 处理 mysql 5.7 协议变更, 无 EOF packet
 1. sannitizer 测试
 2. charset format
 3. 处理掉 buf_readCStr buf_readStr
 3. 比较ip大小, 做一个会话struct, 挂一个 mysql_conn_data, 两个方向的 buffer
+4. 支持多端口
+5. 支持 统计 sql 执行时间
+6. 测试 exec 各种类型
+7. 打印 Server 和 Client 的能力
 
+
+OK: 测试 新旧 两种协议 同时连接的场景 ~
+用简单的 strmap 处理 ResultSet 结果集?!  string <=> string
 */
 
 #if !defined(UNUSED)
 #define UNUSED(x) ((void)(x))
 #endif
 
-// 每个端口挂一个 struct conn 链表,
-// 简单处理, conn 代表半个 tcp 回话, 单方向连接
-// 每个 struct conn 挂一个 buffer 缓存接受数据, 用来处理粘包,半包
-#define PORT_QUEUE_SIZE 65535
-static QUEUE PORT_QUEUE[PORT_QUEUE_SIZE];
+#define LOG_INFO(fmt, ...) \
+    fprintf(stderr, "\x1B[1;32m" fmt "\x1B[0m\n", ##__VA_ARGS__);
 
-static int16_t mysql_server_port;
-static struct mysql_conn_data g_conn_data;
+#define LOG_ERROR(fmt, ...) \
+    fprintf(stderr, "\x1B[1;31m" fmt "\x1B[0m\n", ##__VA_ARGS__);
+
+#define PANIC(fmt, ...)                                                                                              \
+    fprintf(stderr, "\x1B[1;31m" fmt "\x1B[0m in function %s %s:%d\n", ##__VA_ARGS__, __func__, __FILE__, __LINE__); \
+    exit(1);
+
+/*
+这里采用端口识别是否是 Mysql Server
+Mysql Server 监听的端口正常情况下 与连接自动分配的端口一般不重合
+如果 Mysql Client bind 的端口 与 某个 Mysql Server 监听的端口一致
+会导致识别错误
+fixme: 使用 ip 做校验
+*/
+
 // #define BUFDZ MYSQL_MAX_PACKET_LEN
 #define BUFSZ 1024 * 1024
-static char g_buf[BUFSZ];
+static char g_buf[BUFSZ]; /* 临时缓存 */
 
+#define SESSION_BK_SZ 2 << 9
+#define SESSION_BK_IDX(x) ((x) & ((2 << 9) - 1))
+#define SESSION_BUFFER_SZ 8192 /* 每个 half connection 的默认接受缓存大小 */
 
-// TODO
-struct mysql_session {
-    // src, dst ip port
-    // src buf, dst buf
-    // mysql_conn_data
+// TODO 移除 kthash 依赖
+// 声明需要存储 stmts 的 hashtable 类型 Map<INT64, struct mysql_stmt_data *>
+KHASH_MAP_INIT_INT64(stmts, struct mysql_stmt_data *);
 
+typedef struct mysql_conn_data mysql_conn_data_t;
+
+struct tuple4
+{
+    uint32_t serv_ip;
+    uint32_t cli_ip;
+    uint16_t serv_port;
+    uint16_t cli_port;
 };
 
-struct conn
+// mysql client <-> mysql server 会话
+struct mysql_session
 {
-    uint32_t ip;   // 网络字节序
-    uint16_t port; // 本机字节序
-    struct buffer *buf;
-    QUEUE node;
+    struct tuple4 t4;
+    mysql_conn_data_t *conn_data;
+    struct buffer *cli_buf;
+    struct buffer *serv_buf;
+    struct mysql_session *next;
 };
 
-static struct conn *conn_create(uint32_t ip, uint16_t port)
+struct mysql_server
 {
-    struct conn *c = malloc(sizeof(*c));
-    if (c == NULL)
-        return NULL;
-    memset(c, 0, sizeof(*c));
-    c->ip = ip;
-    c->port = port;
-    c->buf = buf_create(8192);
-    return c;
-}
+    uint16_t port;
+    struct mysql_session *bk[SESSION_BK_SZ]; // idx: cli_port % SESSION_BK_SZ
+};
 
-static void conn_release(struct conn *c)
+/* mysql session store */
+struct mysql_ss
 {
-    assert(c);
-    buf_release(c->buf);
-    free(c);
-}
+    int sz;                       // 固定大小
+    uint16_t serv_ports[10];      // 最多监听10个 mysql server 端口
+    struct mysql_server *serv[0]; // 不占空间
+};
 
-static void pq_init()
+struct mysql_stmt_data
 {
-    int i = 0;
-    for (; i < PORT_QUEUE_SIZE; i++)
-    {
-        QUEUE_INIT(&PORT_QUEUE[i]);
-    }
-}
+    uint16_t nparam;
+    uint8_t *param_flags;
+};
 
-static void pq_release()
+// TODO ??
+struct mysql_frame_data
 {
-    QUEUE *q;
-    QUEUE *el;
-    struct conn *c;
-    int i = 0;
+    mysql_state_t state;
+};
 
-    for (; i < PORT_QUEUE_SIZE; i++)
-    {
-        q = &PORT_QUEUE[i];
-        if (QUEUE_EMPTY(q))
-        {
-            continue;
-        }
-
-        QUEUE_FOREACH(el, q)
-        {
-            c = QUEUE_DATA(el, struct conn, node);
-            conn_release(c);
-        }
-    }
-}
-
-static void pq_dump()
+// 按字段类型解析 dissect 预编译语句执行时绑定的值
+typedef struct mysql_exec_dissector
 {
-    QUEUE *q;
-    QUEUE *el;
-    struct conn *c;
-    int i = 0;
-    char ip_buf[INET_ADDRSTRLEN];
+    uint8_t type;
+    uint8_t unsigned_flag;
+    void (*dissector)(struct buffer *buf);
+} mysql_exec_dissector_t;
 
-    int bytes = 0;
-    for (; i < PORT_QUEUE_SIZE; i++)
-    {
-        q = &PORT_QUEUE[i];
-        if (QUEUE_EMPTY(q))
-        {
-            continue;
-        }
-
-        QUEUE_FOREACH(el, q)
-        {
-            c = QUEUE_DATA(el, struct conn, node);
-            inet_ntop(AF_INET, &c->ip, ip_buf, INET_ADDRSTRLEN);
-            printf("%s:%d %zu\n", ip_buf, c->port, buf_readable(c->buf));
-            bytes += buf_internalCapacity(c->buf);
-        }
-        printf("bytes: %d\n", bytes);
-    }
-}
-
-static struct conn *pq_get_internal(uint32_t ip, uint16_t port, int is_remove)
+// 会话状态
+struct mysql_conn_data
 {
-    QUEUE *q = &PORT_QUEUE[port];
-    if (QUEUE_EMPTY(q))
-    {
-        return NULL;
-    }
+    uint16_t srv_caps;
+    uint16_t srv_caps_ext;
+    uint16_t clnt_caps;
+    uint16_t clnt_caps_ext;
+    mysql_state_t state;
+    uint16_t stmt_num_params;
+    uint16_t stmt_num_fields;
+    khash_t(stmts) * stmts;
+    uint8_t major_version;
+    uint32_t frame_start_ssl;
+    uint32_t frame_start_compressed;
+    uint8_t compressed_state;
 
-    QUEUE *el;
-    struct conn *c;
-    QUEUE_FOREACH(el, q)
-    {
-        c = QUEUE_DATA(el, struct conn, node);
-        if (c->ip == ip)
-        {
-            if (is_remove)
-            {
-                QUEUE_REMOVE(el);
-            }
-            return c;
-        }
-    }
-    return NULL;
-}
+    // 扩展字段
+    uint64_t num_fields; // FIX Mysql 5.7 协议ResultSet 废弃 EOF Packet 的问题
+    uint64_t cur_field;
+    char *user;
+};
 
-static struct conn *pq_get(uint32_t ip, uint16_t port)
-{
-    return pq_get_internal(ip, port, 0);
-}
-
-struct conn *pq_del(uint32_t ip, uint16_t port)
-{
-    return pq_get_internal(ip, port, 1);
-}
-
-void pq_add(struct conn *c)
-{
-    QUEUE *q = &PORT_QUEUE[c->port];
-    if (pq_get(c->ip, c->port) == NULL)
-    {
-        QUEUE_INSERT_TAIL(q, &c->node);
-    }
-    else
-    {
-        assert(false);
-    }
-}
-
-// malloc free 全部修改为 栈内存.... 反正不需要保存, 直接打印到控制台好了
 static int buf_strsize(struct buffer *buf);
 static uint64_t buf_readFle(struct buffer *buf, uint64_t *len, uint8_t *is_null);
 static int buf_peekFleLen(struct buffer *buf);
@@ -203,6 +163,290 @@ static void mysql_dissect_ok_packet(struct buffer *buf, mysql_conn_data_t *conn_
 static void mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data);
 static int mysql_dissect_session_tracker_entry(struct buffer *buf);
 static void mysql_dissect_row_packet(struct buffer *buf);
+static void mysql_dissect_exec_string(struct buffer *buf);
+static void mysql_dissect_exec_time(struct buffer *buf);
+static void mysql_dissect_exec_datetime(struct buffer *buf);
+static void mysql_dissect_exec_tiny(struct buffer *buf);
+static void mysql_dissect_exec_short(struct buffer *buf);
+static void mysql_dissect_exec_long(struct buffer *buf);
+static void mysql_dissect_exec_float(struct buffer *buf);
+static void mysql_dissect_exec_double(struct buffer *buf);
+static void mysql_dissect_exec_longlong(struct buffer *buf);
+static void mysql_dissect_exec_null(struct buffer *buf);
+static char mysql_dissect_exec_param(struct buffer *buf, uint8_t param_flags);
+
+static struct mysql_conn_data *
+mysql_conn_data_create()
+{
+    struct mysql_conn_data *d = calloc(1, sizeof(*d));
+    if (d == NULL)
+    {
+        return NULL;
+    }
+
+    d->srv_caps = 0;
+    d->clnt_caps = 0;
+    d->clnt_caps_ext = 0;
+    d->state = UNDEFINED;
+    d->stmts = kh_init(stmts);
+    d->major_version = 0;
+    d->frame_start_ssl = 0;
+    d->frame_start_compressed = 0;
+    d->compressed_state = MYSQL_COMPRESS_NONE;
+    d->num_fields = 0;
+    d->cur_field = 0;
+
+    return d;
+}
+
+static void
+mysql_conn_data_release(struct mysql_conn_data *d)
+{
+    if (d->user)
+    {
+        free(d->user);
+    }
+    kh_destroy(stmts, d->stmts);
+    free(d);
+}
+
+static struct mysql_session *
+mysql_session_create(struct tuple4 *t4)
+{
+    struct mysql_session *s = calloc(1, sizeof(*s));
+    if (s == NULL)
+    {
+        return s;
+    }
+    s->conn_data = mysql_conn_data_create();
+    if (s->conn_data == NULL)
+    {
+        free(s);
+        return NULL;
+    }
+    s->cli_buf = buf_create(SESSION_BUFFER_SZ);
+    if (s->cli_buf == NULL)
+    {
+        mysql_conn_data_release(s->conn_data);
+        free(s);
+        return NULL;
+    }
+    s->serv_buf = buf_create(SESSION_BUFFER_SZ);
+    if (s->serv_buf == NULL)
+    {
+        buf_release(s->cli_buf);
+        mysql_conn_data_release(s->conn_data);
+        free(s);
+        return NULL;
+    }
+
+    s->t4.cli_ip = t4->cli_ip;
+    s->t4.cli_port = t4->cli_port;
+    s->t4.serv_ip = t4->serv_ip;
+    s->t4.serv_port = t4->serv_port;
+    return s;
+}
+
+static void
+mysql_session_release(struct mysql_session *s)
+{
+    buf_release(s->cli_buf);
+    buf_release(s->serv_buf);
+    mysql_conn_data_release(s->conn_data);
+    free(s);
+}
+
+static struct mysql_ss *
+mysql_ss_create(uint16_t serv_ports[], int sz)
+{
+    int i;
+    struct mysql_ss *ss = calloc(1, sizeof(*ss) + sz * sizeof(struct mysql_server));
+    if (ss == NULL)
+    {
+        return NULL;
+    }
+    ss->sz = sz;
+    for (i = 0; i < sz; i++)
+    {
+        ss->serv_ports[i] = serv_ports[i];
+        ss->serv[i] = calloc(1, sizeof(struct mysql_server));
+        assert(ss->serv[i]);
+    }
+    return ss;
+}
+
+static void
+mysql_ss_release(struct mysql_ss *ss)
+{
+    int i, j;
+    struct mysql_session *head, *tmp;
+    for (i = 0; i < ss->sz; i++)
+    {
+        if (ss->serv[i])
+        {
+            for (j = 0; j <= SESSION_BK_SZ; j++)
+            {
+                head = ss->serv[i]->bk[j];
+                while (head)
+                {
+                    tmp = head->next;
+                    mysql_session_release(head);
+                    head = tmp;
+                }
+                ss->serv[i]->bk[j] = NULL;
+            }
+            free(ss->serv[i]);
+        }
+    }
+    free(ss);
+}
+
+static bool
+mysql_is_server(struct mysql_ss *ss, uint16_t port)
+{
+    int i;
+    for (i = 0; i < ss->sz; i++)
+    {
+        if (ss->serv_ports[i] == port)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void
+mysql_fix_tuple4(struct mysql_ss *ss, struct tuple4 *t4)
+{
+    if (mysql_is_server(ss, t4->serv_port))
+    {
+        return;
+    }
+    else if (mysql_is_server(ss, t4->cli_port))
+    {
+        uint32_t tmp;
+
+        tmp = t4->serv_port;
+        t4->serv_port = t4->cli_port;
+        t4->cli_port = tmp;
+
+        tmp = t4->serv_ip;
+        t4->serv_ip = t4->cli_ip;
+        t4->cli_ip = tmp;
+    }
+    else
+    {
+        PANIC("接收到无法识别的数据包, 来自端口 sport=%u dport=%u, 请确认监听 Mysql Server 端口", t4->serv_port, t4->cli_port);
+    }
+}
+
+// private
+static struct mysql_session *
+mysql_ss_get_internal(struct mysql_ss *ss, struct tuple4 *t4, bool remove)
+{
+    int i;
+    struct mysql_session *head, *last = NULL;
+    for (i = 0; i < ss->sz; i++)
+    {
+        if (ss->serv_ports[i] == t4->serv_port)
+        {
+            int idx = SESSION_BK_IDX(t4->cli_port);
+            head = ss->serv[i]->bk[idx];
+            while (head)
+            {
+                if (head->t4.cli_ip == t4->cli_ip)
+                {
+                    if (remove)
+                    {
+                        if (last == NULL)
+                        {
+                            ss->serv[i]->bk[idx] = head->next;
+                        }
+                        else
+                        {
+                            last->next = head->next;
+                        }
+                        mysql_session_release(head);
+                        head = NULL;
+                    }
+                    return head;
+                }
+                last = head;
+                head = head->next;
+            }
+        }
+    }
+    return NULL;
+}
+
+// private
+// 创建新的mysql_session, 需要自行保证之前不存在
+static struct mysql_session *
+mysql_ss_add_internal(struct mysql_ss *ss, struct tuple4 *t4)
+{
+    int i;
+    struct mysql_session *head, *new;
+    for (i = 0; i < ss->sz; i++)
+    {
+        if (ss->serv_ports[i] == t4->serv_port)
+        {
+            int idx = SESSION_BK_IDX(t4->cli_port);
+            new = mysql_session_create(t4);
+            if (new == NULL)
+                assert(false);
+            new->next = ss->serv[i]->bk[idx];
+            ss->serv[i]->bk[idx] = new;
+            return new;
+        }
+    }
+
+    assert(false); // TODO
+    return NULL;
+}
+
+static struct mysql_session *
+mysql_ss_get(struct mysql_ss *ss, struct tuple4 *t4)
+{
+    mysql_fix_tuple4(ss, t4);
+    struct mysql_session *s = mysql_ss_get_internal(ss, t4, false);
+    if (s == NULL)
+    {
+        return mysql_ss_add_internal(ss, t4);
+    } else {
+        return s;
+    }
+}
+
+static void
+mysql_ss_del(struct mysql_ss *ss, struct tuple4 *t4)
+{
+    mysql_fix_tuple4(ss, t4);
+    mysql_ss_get_internal(ss, t4, true);
+}
+
+static void
+mysql_tuple4_init(struct tuple4 *t4, uint32_t s_ip, uint16_t s_port, uint32_t d_ip, uint16_t d_port)
+{
+    t4->serv_ip = s_ip;
+    t4->cli_ip = d_ip;
+    t4->serv_port = s_port;
+    t4->cli_port = d_port;
+}
+
+static struct buffer *
+mysql_session_getbuf(struct mysql_session *s, struct tuple4 *t4, uint16_t s_port, bool *is_response)
+{
+    if (t4->serv_port == s_port)
+    {
+        *is_response = true;
+        return s->serv_buf;
+    }
+    else
+    {
+        *is_response = false;
+        return s->cli_buf;
+    }
+}
 
 void pkt_handle(void *ud,
                 const struct pcap_pkthdr *pkt_hdr,
@@ -212,10 +456,11 @@ void pkt_handle(void *ud,
                 const u_char *payload,
                 size_t payload_size)
 {
+    static struct tuple4 t4;
     static char s_ip_buf[INET_ADDRSTRLEN];
     static char d_ip_buf[INET_ADDRSTRLEN];
 
-    struct conn *c;
+    struct mysql_half_conn *c;
 
     uint32_t s_ip = ip_hdr->ip_src.s_addr;
     uint16_t s_port = ntohs(tcp_hdr->th_sport);
@@ -229,20 +474,14 @@ void pkt_handle(void *ud,
     printf("%s:%d > %s:%d ack %u, seq %u, sz %zd\n", s_ip_buf, s_port, d_ip_buf, d_port,
            ntohl(tcp_hdr->th_ack), ntohl(tcp_hdr->th_seq), payload_size);
 
+    struct mysql_ss *ss = (struct mysql_ss *)ud;
+    mysql_tuple4_init(&t4, s_ip, s_port, d_ip, d_port);
+
     // 连接关闭, 清理数据
     if (tcp_hdr->th_flags & TH_FIN || tcp_hdr->th_flags & TH_RST)
     {
         LOG_INFO("%s:%d > %s:%d Close Connection", s_ip_buf, s_port, d_ip_buf, d_port);
-        c = pq_del(s_ip, s_port);
-        if (c)
-        {
-            conn_release(c);
-        }
-        c = pq_del(ip_hdr->ip_dst.s_addr, ntohs(tcp_hdr->th_dport));
-        if (c)
-        {
-            conn_release(c);
-        }
+        mysql_ss_del(ss, &t4);
         return;
     }
 
@@ -251,25 +490,13 @@ void pkt_handle(void *ud,
         return;
     }
 
-    // 这里假定一定是 mysql 数据 !!!
-    // 获取或初始化连接对象
-    c = pq_get(s_ip, s_port);
-    if (c == NULL)
-    {
-        c = conn_create(s_ip, s_port);
-        pq_add(c);
-    }
+    bool is_response;
+    struct mysql_session *s = mysql_ss_get(ss, &t4);
+    struct buffer *buf = mysql_session_getbuf(s, &t4, s_port, &is_response);
 
-    struct buffer *buf = c->buf;
     buf_append(buf, (const char *)payload, payload_size);
 
-    bool is_response = false;
-    if (s_port == mysql_server_port)
-    {
-        is_response = true;
-    }
-
-    // 一个 tcp segment 可能包括 N 个 Mysql Packet, 比如 select查询结果集
+    // 一个 tcp segment 包括 N 个 Mysql Packet
     while (is_completed_mysql_pdu(buf))
     {
         int32_t pkt_sz = buf_readInt32LE24(buf);
@@ -285,37 +512,37 @@ void pkt_handle(void *ud,
 
         if (is_response)
         {
-            if (pkt_num == 0 && g_conn_data.state == UNDEFINED)
+            if (pkt_num == 0 && s->conn_data->state == UNDEFINED)
             {
-                mysql_dissect_greeting(rbuf, &g_conn_data);
+                mysql_dissect_greeting(rbuf, s->conn_data);
             }
             else
             {
-                mysql_dissect_response(rbuf, &g_conn_data);
+                mysql_dissect_response(rbuf, s->conn_data);
             }
         }
         else
         {
             // TODO 这里 有问题, 暂时没进入该分支 !!!!, 抓取不到 login
-            if (g_conn_data.state == LOGIN && (pkt_num == 1 || (pkt_num == 2 && is_ssl)))
+            if (s->conn_data->state == LOGIN && (pkt_num == 1 || (pkt_num == 2 && is_ssl)))
             {
-                mysql_dissect_login(rbuf, &g_conn_data);
+                mysql_dissect_login(rbuf, s->conn_data);
                 if (pkt_num == 2 && is_ssl)
                 {
                     PANIC("SLL NOT SUPPORT");
                 }
                 // TODO 处理 SSL
                 /*
-                if ((g_conn_data.srv_caps & MYSQL_CAPS_CP) && (g_conn_data.clnt_caps & MYSQL_CAPS_CP))
+                if ((s->conn_data->srv_caps & MYSQL_CAPS_CP) && (s->conn_data->clnt_caps & MYSQL_CAPS_CP))
                 {
-                    g_conn_data.frame_start_compressed = pinfo->num;
-                    g_conn_data.compressed_state = MYSQL_COMPRESS_INIT;
+                    s->conn_data->frame_start_compressed = pinfo->num;
+                    s->conn_data->compressed_state = MYSQL_COMPRESS_INIT;
                 }
                 */
             }
             else
             {
-                mysql_dissect_request(rbuf, &g_conn_data);
+                mysql_dissect_request(rbuf, s->conn_data);
             }
         }
         buf_release(rbuf);
@@ -323,28 +550,8 @@ void pkt_handle(void *ud,
 
     if (buf_internalCapacity(buf) > 1024 * 1024)
     {
-        buf_shrink(c->buf, 0);
+        buf_shrink(buf, 0);
     }
-}
-
-void init()
-{
-    pq_init();
-
-    g_conn_data.srv_caps = 0;
-    g_conn_data.clnt_caps = 0;
-    g_conn_data.clnt_caps_ext = 0;
-    g_conn_data.state = UNDEFINED;
-    // g_conn_data.stmts =
-    g_conn_data.major_version = 0;
-    g_conn_data.frame_start_ssl = 0;
-    g_conn_data.frame_start_compressed = 0;
-    g_conn_data.compressed_state = MYSQL_COMPRESS_NONE;
-}
-
-void release()
-{
-    pq_release();
 }
 
 int main(int argc, char **argv)
@@ -359,7 +566,9 @@ int main(int argc, char **argv)
         device = argv[1];
     }
 
-    mysql_server_port = 3306;
+    uint16_t mysql_server_ports[1] = {3306};
+    struct mysql_ss *ss = mysql_ss_create(mysql_server_ports, 1);
+    assert(ss);
 
     struct tcpsniff_opt opt = {
         .snaplen = 65535,
@@ -368,50 +577,16 @@ int main(int argc, char **argv)
         // .device = device,
         .device = "lo0",
         .filter_exp = "tcp and port 3306",
-        .ud = NULL};
-
-    init();
+        .ud = ss};
 
     if (!tcpsniff(&opt, pkt_handle))
     {
         fprintf(stderr, "fail to sniff\n");
-        release();
     }
+    mysql_ss_release(ss);
+
     return 0;
 }
-
-static const char *
-val_to_str(const struct val_str *val_strs, uint32_t val, char *def)
-{
-    struct val_str *p = (struct val_str *)val_strs - 1;
-    while ((++p)->str)
-    {
-        if (p->val == val)
-        {
-            return p->str;
-        }
-    }
-    return def;
-}
-
-static const char *
-mysql_get_command(uint32_t val, char *def)
-{
-    return val_to_str(mysql_command_vals, val, def);
-}
-
-static const char *
-mysql_get_charset(uint32_t val, char *def)
-{
-    return val_to_str(mysql_collation_vals, val, def);
-}
-
-static const char*
-mysql_get_field_type(uint32_t val, char *def) {
-    return val_to_str(type_constants, val, def);
-}
-
-// mysql_collation_vals
 
 static int buf_strsize(struct buffer *buf)
 {
@@ -752,7 +927,6 @@ mysql_dissect_greeting(struct buffer *buf, mysql_conn_data_t *conn_data)
     /* 1 byte Charset */
     int8_t charset = buf_readInt8(buf);
     LOG_INFO("Server Charset [%s](0x%02x)", mysql_get_charset(charset, "未知编码"), charset);
-    
 
     /* 2 byte ServerStatus */
     int16_t server_status = buf_readInt16LE(buf);
@@ -942,13 +1116,8 @@ mysql_dissect_attributes(struct buffer *buf)
 static void
 mysql_dissect_auth_switch_response(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
-    int lenstr;
-    LOG_INFO("Auth Switch Response");
-
-    /* Data */
-    char *data = buf_dupCStr(buf);
-    LOG_INFO("%s", data);
-    free(data);
+    buf_readCStr(buf, g_buf, BUFSZ);
+    LOG_INFO("Auth Switch Response, Data: %s", g_buf);
 }
 
 /*, packet_info *pinfo, */
@@ -957,7 +1126,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
     int lenstr;
     uint32_t stmt_id;
-    my_stmt_data_t *stmt_data;
+    struct mysql_stmt_data *stmt_data;
     int stmt_pos, param_offset;
 
     if (conn_data->state == AUTH_SWITCH_RESPONSE)
@@ -1004,7 +1173,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
         break;
 
     case MYSQL_STMT_PREPARE:
-        buf_readCStr(buf, g_buf, BUFSZ);
+        buf_readStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql Query: %s", g_buf);
         mysql_set_conn_state(conn_data, RESPONSE_PREPARE);
         break;
@@ -1134,45 +1303,47 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     case MYSQL_STMT_EXECUTE:
     {
         uint32_t mysql_stmt_id = buf_readInt32LE(buf);
-        uint8_t mysql_exec = buf_readInt8(buf);
+        uint8_t mysql_exec_flags = buf_readInt8(buf);
         uint32_t mysql_exec_iter = buf_readInt32LE(buf);
-    }
+        int stmt_pos;
 
-        // TODO STMT !!!!!
-        // stmt_data = (my_stmt_data_t *)wmem_tree_lookup32(conn_data->stmts, stmt_id);
-        // if (stmt_data != NULL) {
-        // 	if (stmt_data->nparam != 0) {
-        // 		uint8_t stmt_bound;
-        // 		offset += (stmt_data->nparam + 7) / 8; /* NULL bitmap */
-        // 		proto_tree_add_item(req_tree, hf_mysql_new_parameter_bound_flag, tvb, offset, 1, ENC_NA);
-        // 		stmt_bound = tvb_get_guint8(tvb, offset);
-        // 		offset += 1;
-        // 		if (stmt_bound == 1) {
-        // 			param_offset = offset + stmt_data->nparam * 2;
-        // 			for (stmt_pos = 0; stmt_pos < stmt_data->nparam; stmt_pos++) {
-        // 				if (!mysql_dissect_exec_param(req_tree, tvb, &offset, &param_offset,
-        // 							      stmt_data->param_flags[stmt_pos], pinfo))
-        // 					break;
-        // 			}
-        // 			offset = param_offset;
-        // 		}
-        // 	}
-        // } else
+        khint_t k = kh_get(stmts, conn_data->stmts, mysql_stmt_id);
+        int is_missing = (k == kh_end(conn_data->stmts));
+        if (is_missing)
         {
             if (buf_readable(buf))
             {
                 buf_readCStr(buf, g_buf, BUFSZ);
+                // mysql prepare response needed
                 LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
             }
         }
+        else
+        {
+            struct mysql_stmt_data *stmt_data = kh_value(conn_data->stmts, mysql_stmt_id);
+            if (stmt_data->nparam != 0)
+            {
+                // TODO test
+                int n = (stmt_data->nparam + 7) / 8; /* NULL bitmap */
+                buf_retrieve(buf, n);
+                uint8_t stmt_bound = buf_readInt8(buf);
+                if (stmt_bound == 1)
+                {
+                    for (stmt_pos = 0; stmt_pos < stmt_data->nparam; stmt_pos++)
+                    {
+                        if (!mysql_dissect_exec_param(buf, stmt_data->param_flags[stmt_pos]))
+                            break;
+                    }
+                }
+            }
+        }
 
-        /*
-		if (buf_readable(buf)) {
-			char * mysql_payload = buf_dupStr(buf, buf_readable(buf));
-			free(mysql_payload);
-		}
-        */
-
+        if (buf_readable(buf))
+        {
+            // buf_readStr(buf, g_buf, BUFSZ);
+            // LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
+        }
+    }
         mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
         break;
 
@@ -1196,6 +1367,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     case MYSQL_TABLE_DUMP:
     case MYSQL_CONNECT_OUT:
     case MYSQL_REGISTER_SLAVE:
+        LOG_ERROR("Unsupport Mysql Replication Packets")
         mysql_set_conn_state(conn_data, REQUEST);
         break;
 
@@ -1211,16 +1383,30 @@ mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data)
     // uint8_t response_code = buf_readInt8(buf);
     uint8_t response_code = buf_peekInt8(buf);
 
-    LOG_INFO("Response Code 0x%02x", response_code);
-
     if (response_code == 0xff)
     { // ERR
+        LOG_INFO("Response Code Error 0x%02x", response_code);
         buf_retrieve(buf, sizeof(uint8_t));
         mysql_dissect_error_packet(buf);
         mysql_set_conn_state(conn_data, REQUEST);
     }
+    /*
+    注：由于EOF值与其它Result Set结构共用1字节，所以在收到报文后需要对EOF包的真实性进行校验，
+    校验条件为：
+        第1字节值为0xFE
+        包长度小于9字节
+        附：EOF结构的相关处理函数：服务器：protocol.cc源文件中的send_eof函数
+    
+    其他资料:
+    关于 EOF 包的废弃:
+    https://dev.mysql.com/worklog/task/?id=7766
+
+if buff[0] == 254 and length of buff is less than 9 bytes then its an
+EOF packet.
+    */
     else if (response_code == 0xfe && buf_readable(buf) < 9)
     { // EOF  !!! < 9
+        LOG_INFO("Response Code EOF 0x%02x", response_code);
         uint8_t mysql_eof = buf_readInt8(buf);
         LOG_INFO("EOF Marker 0x%02x", mysql_eof);
 
@@ -1268,8 +1454,15 @@ mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data)
             mysql_set_conn_state(conn_data, REQUEST);
         }
     }
-    else if (response_code == 0x00)
+    /*
+2017-12-03 修改 OK Packet 确认逻辑,  加入 > 9 逻辑
+参见:https://dev.mysql.com/worklog/task/?id=7766
+if buff[0] == 0 and length of buff is greater than 7 bytes then its an
+OK packet.
+    */
+    else if (response_code == 0x00 && buf_readable(buf) > 9)
     { // OK
+        LOG_INFO("Response Code OK 0x%02x", response_code);
         if (conn_data->state == RESPONSE_PREPARE)
         {
             // mysql_dissect_response_prepare(buf, conn_data);
@@ -1309,7 +1502,40 @@ mysql_dissect_response(struct buffer *buf, mysql_conn_data_t *conn_data)
         case RESPONSE_SHOW_FIELDS:
         case RESPONSE_PREPARE:
         case PREPARED_PARAMETERS:
+            /*
+            原来的判断逻辑: 
+            当 N 个 field packet 发送完成 之后, 会受到一个 EOF Packet
+            如果 当前状态为 FIELD_PACKET, 则变更为 ROW_PACKET, 下一个包则按照 row packet 来解析
+
+参见: https://dev.mysql.com/worklog/task/?id=7766
+Metadata result set will no longer be terminated with EOF packet as the field
+count information present will be enough for client to process the metadata.
+Row result set(Text or Binary) will now be terminated with OK packet.
+
+            因为有 field count 信息, 所以字段元信息只有不再发送 EOF packet
+            现在在 conn_data 加上 num_fields, 用来计数判断
+            原本 ResultSet 最后仍然会有 EOF 包, 现在替换为 OK Packet
+
+            而且:
+            因为抓包开始时候可能已经错过了 Login Request Phase, 所以无从得知 Client Cap
+            1. 要通过 Client Cap 判断, 
+            2. 也要通过 Fields Count 剩余来判断
+            */
+
+            if (conn_data->num_fields == 0)
+            {
+                mysql_dissect_row_packet(buf);
+                return;
+            }
+
             mysql_dissect_field_packet(buf, conn_data);
+            conn_data->num_fields--;
+
+            if ((conn_data->clnt_caps_ext & MYSQL_CAPS_DE) && (conn_data->num_fields == 0))
+            {
+                LOG_ERROR("CLIENT 废弃 EOF");
+                mysql_set_conn_state(conn_data, ROW_PACKET);
+            }
             break;
 
         case ROW_PACKET:
@@ -1340,6 +1566,8 @@ mysql_dissect_result_header(struct buffer *buf, mysql_conn_data_t *conn_data)
     LOG_INFO("Tabular");
     uint64_t num_fields = buf_readFle(buf, NULL, NULL);
     LOG_INFO("num fields %llu", num_fields);
+    conn_data->num_fields = num_fields; // fix bug
+    conn_data->cur_field = 0;
     if (buf_readable(buf))
     {
         uint64_t extra = buf_readFle(buf, NULL, NULL);
@@ -1428,6 +1656,9 @@ mysql_dissect_ok_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
 static void
 mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
+    conn_data->cur_field++;
+    LOG_INFO("Field %llu", conn_data->cur_field);
+
     char *str;
     buf_readFleStr(buf, g_buf, BUFSZ);
     LOG_INFO("Catalog %s", g_buf);
@@ -1530,4 +1761,203 @@ mysql_dissect_row_packet(struct buffer *buf)
             LOG_INFO("Text: %s", g_buf);
         }
     }
+}
+
+static const mysql_exec_dissector_t mysql_exec_dissectors[] = {
+    {0x01, 0, mysql_dissect_exec_tiny},
+    {0x02, 0, mysql_dissect_exec_short},
+    {0x03, 0, mysql_dissect_exec_long},
+    {0x04, 0, mysql_dissect_exec_float},
+    {0x05, 0, mysql_dissect_exec_double},
+    {0x06, 0, mysql_dissect_exec_null},
+    {0x07, 0, mysql_dissect_exec_datetime},
+    {0x08, 0, mysql_dissect_exec_longlong},
+    {0x0a, 0, mysql_dissect_exec_datetime},
+    {0x0b, 0, mysql_dissect_exec_time},
+    {0x0c, 0, mysql_dissect_exec_datetime},
+    {0xf6, 0, mysql_dissect_exec_string},
+    {0xfc, 0, mysql_dissect_exec_string},
+    {0xfd, 0, mysql_dissect_exec_string},
+    {0xfe, 0, mysql_dissect_exec_string},
+    {0x00, 0, NULL},
+};
+
+static void
+mysql_dissect_exec_string(struct buffer *buf)
+{
+    uint32_t param_len = buf_readInt8(buf);
+
+    switch (param_len)
+    {
+    case 0xfc: /* 252 - 64k chars */
+        param_len = buf_readInt16LE(buf);
+        break;
+    case 0xfd: /* 64k - 16M chars */
+        param_len = buf_readInt32LE24(buf);
+        break;
+    default: /* < 252 chars */
+        break;
+    }
+
+    buf_readStr(buf, g_buf, param_len);
+    LOG_INFO("String %s", g_buf);
+}
+
+static void
+mysql_dissect_exec_time(struct buffer *buf)
+{
+    uint8_t param_len = buf_readInt8(buf);
+
+    uint8_t mysql_exec_field_time_sign = 0;
+    uint32_t mysql_exec_field_time_days = 0;
+    uint8_t mysql_exec_field_hour = 0;
+    uint8_t mysql_exec_field_minute = 0;
+    uint8_t mysql_exec_field_second = 0;
+    uint32_t mysql_exec_field_second_b = 0;
+
+    if (param_len >= 1)
+    {
+        mysql_exec_field_time_sign = buf_readInt8(buf);
+    }
+    if (param_len >= 5)
+    {
+        mysql_exec_field_time_days = buf_readInt32LE(buf);
+    }
+    if (param_len >= 8)
+    {
+        mysql_exec_field_hour = buf_readInt8(buf);
+        mysql_exec_field_minute = buf_readInt8(buf);
+        mysql_exec_field_second = buf_readInt8(buf);
+    }
+    if (param_len >= 12)
+    {
+        mysql_exec_field_second_b = buf_readInt32LE(buf);
+    }
+
+    // 处理掉 > 12 部分
+    if (param_len - 12)
+    {
+        buf_retrieve(buf, param_len - 12);
+    }
+}
+
+static void
+mysql_dissect_exec_datetime(struct buffer *buf)
+{
+    uint8_t param_len = buf_readInt8(buf);
+
+    uint16_t mysql_exec_field_year = 0;
+    uint8_t mysql_exec_field_month = 0;
+    uint8_t mysql_exec_field_day = 0;
+    uint8_t mysql_exec_field_hour = 0;
+    uint8_t mysql_exec_field_minute = 0;
+    uint8_t mysql_exec_field_second = 0;
+    uint32_t mysql_exec_field_second_b = 0;
+
+    if (param_len >= 2)
+    {
+        mysql_exec_field_year = buf_readInt16LE(buf);
+    }
+    if (param_len >= 4)
+    {
+        mysql_exec_field_month = buf_readInt8(buf);
+        mysql_exec_field_day = buf_readInt8(buf);
+    }
+    if (param_len >= 7)
+    {
+        mysql_exec_field_hour = buf_readInt8(buf);
+        mysql_exec_field_minute = buf_readInt8(buf);
+        mysql_exec_field_second = buf_readInt8(buf);
+    }
+    if (param_len >= 11)
+    {
+        mysql_exec_field_second_b = buf_readInt32LE(buf);
+    }
+
+    // 处理掉 > 12 部分
+    if (param_len - 11)
+    {
+        buf_retrieve(buf, param_len - 11);
+    }
+}
+
+static void
+mysql_dissect_exec_tiny(struct buffer *buf)
+{
+    uint8_t mysql_exec_field_tiny = buf_readInt8(buf);
+    LOG_INFO("Mysql Exec Tiny %hhu", mysql_exec_field_tiny);
+}
+
+static void
+mysql_dissect_exec_short(struct buffer *buf)
+{
+    uint16_t mysql_exec_field_short = buf_readInt16LE(buf);
+    LOG_INFO("Mysql Exec Short %hu", mysql_exec_field_short);
+}
+
+static void
+mysql_dissect_exec_long(struct buffer *buf)
+{
+    uint32_t mysql_exec_field_long = buf_readInt32LE(buf);
+    LOG_INFO("Mysql Exec Long %u", mysql_exec_field_long);
+}
+
+static void
+mysql_dissect_exec_float(struct buffer *buf)
+{
+    float mysql_exec_field_float = buf_readInt32LE(buf);
+    LOG_INFO("Mysql Exec Float %f", mysql_exec_field_float);
+}
+
+static void
+mysql_dissect_exec_double(struct buffer *buf)
+{
+    double mysql_exec_field_double = buf_readInt64LE(buf);
+    LOG_INFO("Mysql Exec Double %f", mysql_exec_field_double);
+}
+
+static void
+mysql_dissect_exec_longlong(struct buffer *buf)
+{
+    uint64_t mysql_exec_field_longlong = buf_readInt64LE(buf);
+    LOG_INFO("Mysql Exec LongLong %llu", mysql_exec_field_longlong);
+}
+
+static void
+mysql_dissect_exec_null(struct buffer *buf)
+{
+    LOG_INFO("Mysql Exec NULL");
+}
+
+// length coded binary: a variable-length number
+// Length Coded String: a variable-length string.
+// Used instead of Null-Terminated String,
+// especially for character strings which might contain '/0' or might be very long.
+// The first part of a Length Coded String is a Length Coded Binary number (the length);
+// the second part of a Length Coded String is the actual data. An example of a short
+// Length Coded String is these three hexadecimal bytes: 02 61 62, which means "length = 2, contents = 'ab'".
+
+static char
+mysql_dissect_exec_param(struct buffer *buf, uint8_t param_flags)
+{
+    int dissector_index = 0;
+
+    uint8_t param_type = buf_readInt8(buf);
+    uint8_t param_unsigned = buf_readInt8(buf); /* signedness */
+    if ((param_flags & MYSQL_PARAM_FLAG_STREAMED) == MYSQL_PARAM_FLAG_STREAMED)
+    {
+        // LOG_INFO("Streamed Parameter");
+        return 1;
+    }
+    while (mysql_exec_dissectors[dissector_index].dissector != NULL)
+    {
+        if (mysql_exec_dissectors[dissector_index].type == param_type &&
+            mysql_exec_dissectors[dissector_index].unsigned_flag == param_unsigned)
+        {
+            mysql_exec_dissectors[dissector_index].dissector(buf);
+            return 1;
+        }
+        dissector_index++;
+    }
+    return 0;
 }

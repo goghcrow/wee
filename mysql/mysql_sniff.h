@@ -4,26 +4,22 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+#include "../base/buffer.h"
+#include "../base/khash.h"
 
-#define LOG_INFO(fmt, ...) \
-    fprintf(stderr, "\x1B[1;32m" fmt "\x1B[0m\n", ##__VA_ARGS__);
 
-#define LOG_ERROR(fmt, ...) \
-    fprintf(stderr, "\x1B[1;31m" fmt "\x1B[0m\n", ##__VA_ARGS__);
-
-#define PANIC(fmt, ...)                                                                                                     \
-    fprintf(stderr, "\x1B[1;31m" fmt "\x1B[0m in function %s %s:%d\n", ##__VA_ARGS__, __func__, __FILE__, __LINE__); \
-    exit(1);
-
+struct val_str {
+    uint32_t      val;
+    const char	  *str;
+};
 
 
 #define MYSQL_MAX_PACKET_LEN  	0xFFFFFF
-#define MYSQL_ERRMSG_SIZE 		512
-#define MYSQL_DEFAULT_CATEGORY 	"def"
+// #define MYSQL_ERRMSG_SIZE 		512
+// #define MYSQL_DEFAULT_CATEGORY 	"def"
 
 /* client/server capabilities
- * Source: http://dev.mysql.com/doc/internals/en/capability-flags.html
- * Source: mysql_com.h
+ * http://dev.mysql.com/doc/internals/en/capability-flags.html
  */
 #define MYSQL_CAPS_LP 0x0001 /* CLIENT_LONG_PASSWORD */
 #define MYSQL_CAPS_FR 0x0002 /* CLIENT_FOUND_ROWS */
@@ -57,7 +53,10 @@
 #define MYSQL_FLD_TIMESTAMP_FLAG      0x0400
 #define MYSQL_FLD_SET_FLAG            0x0800
 
-/* extended capabilities: 4.1+ client only
+/* 
+ * 参见最新协议文档: https://dev.mysql.com/doc/dev/mysql-server/8.0.1/group__group__cs__capabilities__flags.html
+ * 
+ * extended capabilities: 4.1+ client only
  *
  * These are libmysqlclient flags and NOT present
  * in the protocol:
@@ -147,331 +146,259 @@
 #define MYSQL_COMPRESS_INIT   1
 #define MYSQL_COMPRESS_ACTIVE 2
 
-struct val_str {
-    uint32_t      val;
-    const char	  *str;
+
+char* mysql_command_table[29] = {
+    /*MYSQL_SLEEP*/"SLEEP",
+    /*MYSQL_QUIT*/"Quit",
+    /*MYSQL_INIT_DB*/"Use Database",
+    /*MYSQL_QUERY*/"Query",
+    /*MYSQL_FIELD_LIST*/"Show Fields",
+    /*MYSQL_CREATE_DB*/"Create Database",
+    /*MYSQL_DROP_DB */"Drop Database",
+    /*MYSQL_REFRESH */"Refresh",
+    /*MYSQL_SHUTDOWN */"Shutdown",
+    /*MYSQL_STATISTICS */"Statistics",
+    /*MYSQL_PROCESS_INFO */"Process List",
+    /*MYSQL_CONNECT */"Connect",
+    /*MYSQL_PROCESS_KILL */"Kill Server Thread",
+    /*MYSQL_DEBUG */"Dump Debuginfo",
+    /*MYSQL_PING */"Ping",
+    /*MYSQL_TIME */"Time",
+    /*MYSQL_DELAY_INSERT */"Insert Delayed",
+    /*MYSQL_CHANGE_USER */"Change User",
+    /*MYSQL_BINLOG_DUMP */"Send Binlog",
+    /*MYSQL_TABLE_DUMP*/"Send Table",
+    /*MYSQL_CONNECT_OUT*/"Slave Connect",
+    /*MYSQL_REGISTER_SLAVE*/"Register Slave",
+    /*MYSQL_STMT_PREPARE*/"Prepare Statement",
+    /*MYSQL_STMT_EXECUTE*/"Execute Statement",
+    /*MYSQL_STMT_SEND_LONG_DATA*/"Send BLOB",
+    /*MYSQL_STMT_CLOSE*/"Close Statement",
+    /*MYSQL_STMT_RESET*/"Reset Statement",
+    /*MYSQL_SET_OPTION*/"Set Option",
+    /*MYSQL_STMT_FETCH*/"Fetch Data",
 };
 
-/* decoding table: command */
-const struct val_str mysql_command_vals[] = {
-	{MYSQL_SLEEP,   "SLEEP"},
-	{MYSQL_QUIT,   "Quit"},
-	{MYSQL_INIT_DB,  "Use Database"},
-	{MYSQL_QUERY,   "Query"},
-	{MYSQL_FIELD_LIST, "Show Fields"},
-	{MYSQL_CREATE_DB,  "Create Database"},
-	{MYSQL_DROP_DB , "Drop Database"},
-	{MYSQL_REFRESH , "Refresh"},
-	{MYSQL_SHUTDOWN , "Shutdown"},
-	{MYSQL_STATISTICS , "Statistics"},
-	{MYSQL_PROCESS_INFO , "Process List"},
-	{MYSQL_CONNECT , "Connect"},
-	{MYSQL_PROCESS_KILL , "Kill Server Thread"},
-	{MYSQL_DEBUG , "Dump Debuginfo"},
-	{MYSQL_PING , "Ping"},
-	{MYSQL_TIME , "Time"},
-	{MYSQL_DELAY_INSERT , "Insert Delayed"},
-	{MYSQL_CHANGE_USER , "Change User"},
-	{MYSQL_BINLOG_DUMP , "Send Binlog"},
-	{MYSQL_TABLE_DUMP, "Send Table"},
-	{MYSQL_CONNECT_OUT, "Slave Connect"},
-	{MYSQL_REGISTER_SLAVE, "Register Slave"},
-	{MYSQL_STMT_PREPARE, "Prepare Statement"},
-	{MYSQL_STMT_EXECUTE, "Execute Statement"},
-	{MYSQL_STMT_SEND_LONG_DATA, "Send BLOB"},
-	{MYSQL_STMT_CLOSE, "Close Statement"},
-	{MYSQL_STMT_RESET, "Reset Statement"},
-	{MYSQL_SET_OPTION, "Set Option"},
-	{MYSQL_STMT_FETCH, "Fetch Data"},
-	{0, NULL}
+char* mysql_charset_table[216] = {
+    /*0*/"Unknown",
+    /*1*/"big5 COLLATE big5_chinese_ci",
+    /*2*/"latin2 COLLATE latin2_czech_cs",
+    /*3*/"dec8 COLLATE dec8_swedish_ci",
+    /*4*/"cp850 COLLATE cp850_general_ci",
+    /*5*/"latin1 COLLATE latin1_german1_ci",
+    /*6*/"hp8 COLLATE hp8_english_ci",
+    /*7*/"koi8r COLLATE koi8r_general_ci",
+    /*8*/"latin1 COLLATE latin1_swedish_ci",
+    /*9*/"latin2 COLLATE latin2_general_ci",
+    /*10*/"swe7 COLLATE swe7_swedish_ci",
+    /*11*/"ascii COLLATE ascii_general_ci",
+    /*12*/"ujis COLLATE ujis_japanese_ci",
+    /*13*/"sjis COLLATE sjis_japanese_ci",
+    /*14*/"cp1251 COLLATE cp1251_bulgarian_ci",
+    /*15*/"latin1 COLLATE latin1_danish_ci",
+    /*16*/"hebrew COLLATE hebrew_general_ci",
+    /*17*/"Unknown",
+    /*18*/"tis620 COLLATE tis620_thai_ci",
+    /*19*/"euckr COLLATE euckr_korean_ci",
+    /*20*/"latin7 COLLATE latin7_estonian_cs",
+    /*21*/"latin2 COLLATE latin2_hungarian_ci",
+    /*22*/"koi8u COLLATE koi8u_general_ci",
+    /*23*/"cp1251 COLLATE cp1251_ukrainian_ci",
+    /*24*/"gb2312 COLLATE gb2312_chinese_ci",
+    /*25*/"greek COLLATE greek_general_ci",
+    /*26*/"cp1250 COLLATE cp1250_general_ci",
+    /*27*/"latin2 COLLATE latin2_croatian_ci",
+    /*28*/"gbk COLLATE gbk_chinese_ci",
+    /*29*/"cp1257 COLLATE cp1257_lithuanian_ci",
+    /*30*/"latin5 COLLATE latin5_turkish_ci",
+    /*31*/"latin1 COLLATE latin1_german2_ci",
+    /*32*/"armscii8 COLLATE armscii8_general_ci",
+    /*33*/"utf8 COLLATE utf8_general_ci",
+    /*34*/"cp1250 COLLATE cp1250_czech_cs",
+    /*35*/"ucs2 COLLATE ucs2_general_ci",
+    /*36*/"cp866 COLLATE cp866_general_ci",
+    /*37*/"keybcs2 COLLATE keybcs2_general_ci",
+    /*38*/"macce COLLATE macce_general_ci",
+    /*39*/"macroman COLLATE macroman_general_ci",
+    /*40*/"cp852 COLLATE cp852_general_ci",
+    /*41*/"latin7 COLLATE latin7_general_ci",
+    /*42*/"latin7 COLLATE latin7_general_cs",
+    /*43*/"macce COLLATE macce_bin",
+    /*44*/"cp1250 COLLATE cp1250_croatian_ci",
+    /*45*/"utf8mb4 COLLATE utf8mb4_general_ci",
+    /*46*/"utf8mb4 COLLATE utf8mb4_bin",
+    /*47*/"latin1 COLLATE latin1_bin",
+    /*48*/"latin1 COLLATE latin1_general_ci",
+    /*49*/"latin1 COLLATE latin1_general_cs",
+    /*50*/"cp1251 COLLATE cp1251_bin",
+    /*51*/"cp1251 COLLATE cp1251_general_ci",
+    /*52*/"cp1251 COLLATE cp1251_general_cs",
+    /*53*/"macroman COLLATE macroman_bin",
+    /*54*/"utf16 COLLATE utf16_general_ci",
+    /*55*/"utf16 COLLATE utf16_bin",
+    /*56*/"utf16le COLLATE utf16le_general_ci",
+    /*57*/"cp1256 COLLATE cp1256_general_ci",
+    /*58*/"cp1257 COLLATE cp1257_bin",
+    /*59*/"cp1257 COLLATE cp1257_general_ci",
+    /*60*/"utf32 COLLATE utf32_general_ci",
+    /*61*/"utf32 COLLATE utf32_bin",
+    /*62*/"utf16le COLLATE utf16le_bin",
+    /*63*/"binary COLLATE binary",
+    /*64*/"armscii8 COLLATE armscii8_bin",
+    /*65*/"ascii COLLATE ascii_bin",
+    /*66*/"cp1250 COLLATE cp1250_bin",
+    /*67*/"cp1256 COLLATE cp1256_bin",
+    /*68*/"cp866 COLLATE cp866_bin",
+    /*69*/"dec8 COLLATE dec8_bin",
+    /*70*/"greek COLLATE greek_bin",
+    /*71*/"hebrew COLLATE hebrew_bin",
+    /*72*/"hp8 COLLATE hp8_bin",
+    /*73*/"keybcs2 COLLATE keybcs2_bin",
+    /*74*/"koi8r COLLATE koi8r_bin",
+    /*75*/"koi8u COLLATE koi8u_bin",
+    /*76*/"Unknown",
+    /*77*/"latin2 COLLATE latin2_bin",
+    /*78*/"latin5 COLLATE latin5_bin",
+    /*79*/"latin7 COLLATE latin7_bin",
+    /*80*/"cp850 COLLATE cp850_bin",
+    /*81*/"cp852 COLLATE cp852_bin",
+    /*82*/"swe7 COLLATE swe7_bin",
+    /*83*/"utf8 COLLATE utf8_bin",
+    /*84*/"big5 COLLATE big5_bin",
+    /*85*/"euckr COLLATE euckr_bin",
+    /*86*/"gb2312 COLLATE gb2312_bin",
+    /*87*/"gbk COLLATE gbk_bin",
+    /*88*/"sjis COLLATE sjis_bin",
+    /*89*/"tis620 COLLATE tis620_bin",
+    /*90*/"ucs2 COLLATE ucs2_bin",
+    /*91*/"ujis COLLATE ujis_bin",
+    /*92*/"geostd8 COLLATE geostd8_general_ci",
+    /*93*/"geostd8 COLLATE geostd8_bin",
+    /*94*/"latin1 COLLATE latin1_spanish_ci",
+    /*95*/"cp932 COLLATE cp932_japanese_ci",
+    /*96*/"cp932 COLLATE cp932_bin",
+    /*97*/"eucjpms COLLATE eucjpms_japanese_ci",
+    /*98*/"eucjpms COLLATE eucjpms_bin",
+    /*99*/"cp1250 COLLATE cp1250_polish_ci",
+    /*100*/"Unknown",
+    /*101*/"utf16 COLLATE utf16_unicode_ci",
+    /*102*/"utf16 COLLATE utf16_icelandic_ci",
+    /*103*/"utf16 COLLATE utf16_latvian_ci",
+    /*104*/"utf16 COLLATE utf16_romanian_ci",
+    /*105*/"utf16 COLLATE utf16_slovenian_ci",
+    /*106*/"utf16 COLLATE utf16_polish_ci",
+    /*107*/"utf16 COLLATE utf16_estonian_ci",
+    /*108*/"utf16 COLLATE utf16_spanish_ci",
+    /*109*/"utf16 COLLATE utf16_swedish_ci",
+    /*110*/"utf16 COLLATE utf16_turkish_ci",
+    /*111*/"utf16 COLLATE utf16_czech_ci",
+    /*112*/"utf16 COLLATE utf16_danish_ci",
+    /*113*/"utf16 COLLATE utf16_lithuanian_ci",
+    /*114*/"utf16 COLLATE utf16_slovak_ci",
+    /*115*/"utf16 COLLATE utf16_spanish2_ci",
+    /*116*/"utf16 COLLATE utf16_roman_ci",
+    /*117*/"utf16 COLLATE utf16_persian_ci",
+    /*118*/"utf16 COLLATE utf16_esperanto_ci",
+    /*119*/"utf16 COLLATE utf16_hungarian_ci",
+    /*120*/"utf16 COLLATE utf16_sinhala_ci",
+    /*121*/"utf16 COLLATE utf16_german2_ci",
+    /*122*/"utf16 COLLATE utf16_croatian_ci",
+    /*123*/"utf16 COLLATE utf16_unicode_520_ci",
+    /*124*/"utf16 COLLATE utf16_vietnamese_ci",
+    /*125*/"Unknown",
+    /*126*/"Unknown",
+    /*127*/"Unknown",
+    /*128*/"ucs2 COLLATE ucs2_unicode_ci",
+    /*129*/"ucs2 COLLATE ucs2_icelandic_ci",
+    /*130*/"ucs2 COLLATE ucs2_latvian_ci",
+    /*131*/"ucs2 COLLATE ucs2_romanian_ci",
+    /*132*/"ucs2 COLLATE ucs2_slovenian_ci",
+    /*133*/"ucs2 COLLATE ucs2_polish_ci",
+    /*134*/"ucs2 COLLATE ucs2_estonian_ci",
+    /*135*/"ucs2 COLLATE ucs2_spanish_ci",
+    /*136*/"ucs2 COLLATE ucs2_swedish_ci",
+    /*137*/"ucs2 COLLATE ucs2_turkish_ci",
+    /*138*/"ucs2 COLLATE ucs2_czech_ci",
+    /*139*/"ucs2 COLLATE ucs2_danish_ci",
+    /*140*/"ucs2 COLLATE ucs2_lithuanian_ci",
+    /*141*/"ucs2 COLLATE ucs2_slovak_ci",
+    /*142*/"ucs2 COLLATE ucs2_spanish2_ci",
+    /*143*/"ucs2 COLLATE ucs2_roman_ci",
+    /*144*/"ucs2 COLLATE ucs2_persian_ci",
+    /*145*/"ucs2 COLLATE ucs2_esperanto_ci",
+    /*146*/"ucs2 COLLATE ucs2_hungarian_ci",
+    /*147*/"ucs2 COLLATE ucs2_sinhala_ci",
+    /*148*/"ucs2 COLLATE ucs2_german2_ci",
+    /*149*/"ucs2 COLLATE ucs2_croatian_ci",
+    /*150*/"ucs2 COLLATE ucs2_unicode_520_ci",
+    /*151*/"ucs2 COLLATE ucs2_vietnamese_ci",
+    /*152*/"Unknown",
+    /*153*/"Unknown",
+    /*154*/"Unknown",
+    /*155*/"Unknown",
+    /*156*/"Unknown",
+    /*157*/"Unknown",
+    /*158*/"Unknown",
+    /*159*/"ucs2 COLLATE ucs2_general_mysql500_ci",
+    /*160*/"utf32 COLLATE utf32_unicode_ci",
+    /*161*/"utf32 COLLATE utf32_icelandic_ci",
+    /*162*/"utf32 COLLATE utf32_latvian_ci",
+    /*163*/"utf32 COLLATE utf32_romanian_ci",
+    /*164*/"utf32 COLLATE utf32_slovenian_ci",
+    /*165*/"utf32 COLLATE utf32_polish_ci",
+    /*166*/"utf32 COLLATE utf32_estonian_ci",
+    /*167*/"utf32 COLLATE utf32_spanish_ci",
+    /*168*/"utf32 COLLATE utf32_swedish_ci",
+    /*169*/"utf32 COLLATE utf32_turkish_ci",
+    /*170*/"utf32 COLLATE utf32_czech_ci",
+    /*171*/"utf32 COLLATE utf32_danish_ci",
+    /*172*/"utf32 COLLATE utf32_lithuanian_ci",
+    /*173*/"utf32 COLLATE utf32_slovak_ci",
+    /*174*/"utf32 COLLATE utf32_spanish2_ci",
+    /*175*/"utf32 COLLATE utf32_roman_ci",
+    /*176*/"utf32 COLLATE utf32_persian_ci",
+    /*177*/"utf32 COLLATE utf32_esperanto_ci",
+    /*178*/"utf32 COLLATE utf32_hungarian_ci",
+    /*179*/"utf32 COLLATE utf32_sinhala_ci",
+    /*180*/"utf32 COLLATE utf32_german2_ci",
+    /*181*/"utf32 COLLATE utf32_croatian_ci",
+    /*182*/"utf32 COLLATE utf32_unicode_520_ci",
+    /*183*/"utf32 COLLATE utf32_vietnamese_ci",
+    /*184*/"Unknown",
+    /*185*/"Unknown",
+    /*186*/"Unknown",
+    /*187*/"Unknown",
+    /*188*/"Unknown",
+    /*189*/"Unknown",
+    /*190*/"Unknown",
+    /*191*/"Unknown",
+    /*192*/"utf8 COLLATE utf8_unicode_ci",
+    /*193*/"utf8 COLLATE utf8_icelandic_ci",
+    /*194*/"utf8 COLLATE utf8_latvian_ci",
+    /*195*/"utf8 COLLATE utf8_romanian_ci",
+    /*196*/"utf8 COLLATE utf8_slovenian_ci",
+    /*197*/"utf8 COLLATE utf8_polish_ci",
+    /*198*/"utf8 COLLATE utf8_estonian_ci",
+    /*199*/"utf8 COLLATE utf8_spanish_ci",
+    /*200*/"utf8 COLLATE utf8_swedish_ci",
+    /*201*/"utf8 COLLATE utf8_turkish_ci",
+    /*202*/"utf8 COLLATE utf8_czech_ci",
+    /*203*/"utf8 COLLATE utf8_danish_ci",
+    /*204*/"utf8 COLLATE utf8_lithuanian_ci",
+    /*205*/"utf8 COLLATE utf8_slovak_ci",
+    /*206*/"utf8 COLLATE utf8_spanish2_ci",
+    /*207*/"utf8 COLLATE utf8_roman_ci",
+    /*208*/"utf8 COLLATE utf8_persian_ci",
+    /*209*/"utf8 COLLATE utf8_esperanto_ci",
+    /*210*/"utf8 COLLATE utf8_hungarian_ci",
+    /*211*/"utf8 COLLATE utf8_sinhala_ci",
+    /*212*/"utf8 COLLATE utf8_german2_ci",
+    /*213*/"utf8 COLLATE utf8_croatian_ci",
+    /*214*/"utf8 COLLATE utf8_unicode_520_ci",
+    /*215*/"utf8 COLLATE utf8_vietnamese_ci"
 };
 
-/*
-SELECT CONCAT('  {', ID, ',"', CHARACTER_SET_NAME, ' COLLATE ', COLLATION_NAME, '"},')
-FROM INFORMATION_SCHEMA.COLLATIONS
-ORDER BY ID
-*/
-const struct val_str mysql_collation_vals[] = {
-    {1,"big5 COLLATE big5_chinese_ci"},
-    {2,"latin2 COLLATE latin2_czech_cs"},
-    {3,"dec8 COLLATE dec8_swedish_ci"},
-    {4,"cp850 COLLATE cp850_general_ci"},
-    {5,"latin1 COLLATE latin1_german1_ci"},
-    {6,"hp8 COLLATE hp8_english_ci"},
-    {7,"koi8r COLLATE koi8r_general_ci"},
-    {8,"latin1 COLLATE latin1_swedish_ci"},
-    {9,"latin2 COLLATE latin2_general_ci"},
-    {10,"swe7 COLLATE swe7_swedish_ci"},
-    {11,"ascii COLLATE ascii_general_ci"},
-    {12,"ujis COLLATE ujis_japanese_ci"},
-    {13,"sjis COLLATE sjis_japanese_ci"},
-    {14,"cp1251 COLLATE cp1251_bulgarian_ci"},
-    {15,"latin1 COLLATE latin1_danish_ci"},
-    {16,"hebrew COLLATE hebrew_general_ci"},
-    {18,"tis620 COLLATE tis620_thai_ci"},
-    {19,"euckr COLLATE euckr_korean_ci"},
-    {20,"latin7 COLLATE latin7_estonian_cs"},
-    {21,"latin2 COLLATE latin2_hungarian_ci"},
-    {22,"koi8u COLLATE koi8u_general_ci"},
-    {23,"cp1251 COLLATE cp1251_ukrainian_ci"},
-    {24,"gb2312 COLLATE gb2312_chinese_ci"},
-    {25,"greek COLLATE greek_general_ci"},
-    {26,"cp1250 COLLATE cp1250_general_ci"},
-    {27,"latin2 COLLATE latin2_croatian_ci"},
-    {28,"gbk COLLATE gbk_chinese_ci"},
-    {29,"cp1257 COLLATE cp1257_lithuanian_ci"},
-    {30,"latin5 COLLATE latin5_turkish_ci"},
-    {31,"latin1 COLLATE latin1_german2_ci"},
-    {32,"armscii8 COLLATE armscii8_general_ci"},
-    {33,"utf8 COLLATE utf8_general_ci"},
-    {34,"cp1250 COLLATE cp1250_czech_cs"},
-    {35,"ucs2 COLLATE ucs2_general_ci"},
-    {36,"cp866 COLLATE cp866_general_ci"},
-    {37,"keybcs2 COLLATE keybcs2_general_ci"},
-    {38,"macce COLLATE macce_general_ci"},
-    {39,"macroman COLLATE macroman_general_ci"},
-    {40,"cp852 COLLATE cp852_general_ci"},
-    {41,"latin7 COLLATE latin7_general_ci"},
-    {42,"latin7 COLLATE latin7_general_cs"},
-    {43,"macce COLLATE macce_bin"},
-    {44,"cp1250 COLLATE cp1250_croatian_ci"},
-    {45,"utf8mb4 COLLATE utf8mb4_general_ci"},
-    {46,"utf8mb4 COLLATE utf8mb4_bin"},
-    {47,"latin1 COLLATE latin1_bin"},
-    {48,"latin1 COLLATE latin1_general_ci"},
-    {49,"latin1 COLLATE latin1_general_cs"},
-    {50,"cp1251 COLLATE cp1251_bin"},
-    {51,"cp1251 COLLATE cp1251_general_ci"},
-    {52,"cp1251 COLLATE cp1251_general_cs"},
-    {53,"macroman COLLATE macroman_bin"},
-    {54,"utf16 COLLATE utf16_general_ci"},
-    {55,"utf16 COLLATE utf16_bin"},
-    {56,"utf16le COLLATE utf16le_general_ci"},
-    {57,"cp1256 COLLATE cp1256_general_ci"},
-    {58,"cp1257 COLLATE cp1257_bin"},
-    {59,"cp1257 COLLATE cp1257_general_ci"},
-    {60,"utf32 COLLATE utf32_general_ci"},
-    {61,"utf32 COLLATE utf32_bin"},
-    {62,"utf16le COLLATE utf16le_bin"},
-    {63,"binary COLLATE binary"},
-    {64,"armscii8 COLLATE armscii8_bin"},
-    {65,"ascii COLLATE ascii_bin"},
-    {66,"cp1250 COLLATE cp1250_bin"},
-    {67,"cp1256 COLLATE cp1256_bin"},
-    {68,"cp866 COLLATE cp866_bin"},
-    {69,"dec8 COLLATE dec8_bin"},
-    {70,"greek COLLATE greek_bin"},
-    {71,"hebrew COLLATE hebrew_bin"},
-    {72,"hp8 COLLATE hp8_bin"},
-    {73,"keybcs2 COLLATE keybcs2_bin"},
-    {74,"koi8r COLLATE koi8r_bin"},
-    {75,"koi8u COLLATE koi8u_bin"},
-    {77,"latin2 COLLATE latin2_bin"},
-    {78,"latin5 COLLATE latin5_bin"},
-    {79,"latin7 COLLATE latin7_bin"},
-    {80,"cp850 COLLATE cp850_bin"},
-    {81,"cp852 COLLATE cp852_bin"},
-    {82,"swe7 COLLATE swe7_bin"},
-    {83,"utf8 COLLATE utf8_bin"},
-    {84,"big5 COLLATE big5_bin"},
-    {85,"euckr COLLATE euckr_bin"},
-    {86,"gb2312 COLLATE gb2312_bin"},
-    {87,"gbk COLLATE gbk_bin"},
-    {88,"sjis COLLATE sjis_bin"},
-    {89,"tis620 COLLATE tis620_bin"},
-    {90,"ucs2 COLLATE ucs2_bin"},
-    {91,"ujis COLLATE ujis_bin"},
-    {92,"geostd8 COLLATE geostd8_general_ci"},
-    {93,"geostd8 COLLATE geostd8_bin"},
-    {94,"latin1 COLLATE latin1_spanish_ci"},
-    {95,"cp932 COLLATE cp932_japanese_ci"},
-    {96,"cp932 COLLATE cp932_bin"},
-    {97,"eucjpms COLLATE eucjpms_japanese_ci"},
-    {98,"eucjpms COLLATE eucjpms_bin"},
-    {99,"cp1250 COLLATE cp1250_polish_ci"},
-    {101,"utf16 COLLATE utf16_unicode_ci"},
-    {102,"utf16 COLLATE utf16_icelandic_ci"},
-    {103,"utf16 COLLATE utf16_latvian_ci"},
-    {104,"utf16 COLLATE utf16_romanian_ci"},
-    {105,"utf16 COLLATE utf16_slovenian_ci"},
-    {106,"utf16 COLLATE utf16_polish_ci"},
-    {107,"utf16 COLLATE utf16_estonian_ci"},
-    {108,"utf16 COLLATE utf16_spanish_ci"},
-    {109,"utf16 COLLATE utf16_swedish_ci"},
-    {110,"utf16 COLLATE utf16_turkish_ci"},
-    {111,"utf16 COLLATE utf16_czech_ci"},
-    {112,"utf16 COLLATE utf16_danish_ci"},
-    {113,"utf16 COLLATE utf16_lithuanian_ci"},
-    {114,"utf16 COLLATE utf16_slovak_ci"},
-    {115,"utf16 COLLATE utf16_spanish2_ci"},
-    {116,"utf16 COLLATE utf16_roman_ci"},
-    {117,"utf16 COLLATE utf16_persian_ci"},
-    {118,"utf16 COLLATE utf16_esperanto_ci"},
-    {119,"utf16 COLLATE utf16_hungarian_ci"},
-    {120,"utf16 COLLATE utf16_sinhala_ci"},
-    {121,"utf16 COLLATE utf16_german2_ci"},
-    {122,"utf16 COLLATE utf16_croatian_ci"},
-    {123,"utf16 COLLATE utf16_unicode_520_ci"},
-    {124,"utf16 COLLATE utf16_vietnamese_ci"},
-    {128,"ucs2 COLLATE ucs2_unicode_ci"},
-    {129,"ucs2 COLLATE ucs2_icelandic_ci"},
-    {130,"ucs2 COLLATE ucs2_latvian_ci"},
-    {131,"ucs2 COLLATE ucs2_romanian_ci"},
-    {132,"ucs2 COLLATE ucs2_slovenian_ci"},
-    {133,"ucs2 COLLATE ucs2_polish_ci"},
-    {134,"ucs2 COLLATE ucs2_estonian_ci"},
-    {135,"ucs2 COLLATE ucs2_spanish_ci"},
-    {136,"ucs2 COLLATE ucs2_swedish_ci"},
-    {137,"ucs2 COLLATE ucs2_turkish_ci"},
-    {138,"ucs2 COLLATE ucs2_czech_ci"},
-    {139,"ucs2 COLLATE ucs2_danish_ci"},
-    {140,"ucs2 COLLATE ucs2_lithuanian_ci"},
-    {141,"ucs2 COLLATE ucs2_slovak_ci"},
-    {142,"ucs2 COLLATE ucs2_spanish2_ci"},
-    {143,"ucs2 COLLATE ucs2_roman_ci"},
-    {144,"ucs2 COLLATE ucs2_persian_ci"},
-    {145,"ucs2 COLLATE ucs2_esperanto_ci"},
-    {146,"ucs2 COLLATE ucs2_hungarian_ci"},
-    {147,"ucs2 COLLATE ucs2_sinhala_ci"},
-    {148,"ucs2 COLLATE ucs2_german2_ci"},
-    {149,"ucs2 COLLATE ucs2_croatian_ci"},
-    {150,"ucs2 COLLATE ucs2_unicode_520_ci"},
-    {151,"ucs2 COLLATE ucs2_vietnamese_ci"},
-    {159,"ucs2 COLLATE ucs2_general_mysql500_ci"},
-    {160,"utf32 COLLATE utf32_unicode_ci"},
-    {161,"utf32 COLLATE utf32_icelandic_ci"},
-    {162,"utf32 COLLATE utf32_latvian_ci"},
-    {163,"utf32 COLLATE utf32_romanian_ci"},
-    {164,"utf32 COLLATE utf32_slovenian_ci"},
-    {165,"utf32 COLLATE utf32_polish_ci"},
-    {166,"utf32 COLLATE utf32_estonian_ci"},
-    {167,"utf32 COLLATE utf32_spanish_ci"},
-    {168,"utf32 COLLATE utf32_swedish_ci"},
-    {169,"utf32 COLLATE utf32_turkish_ci"},
-    {170,"utf32 COLLATE utf32_czech_ci"},
-    {171,"utf32 COLLATE utf32_danish_ci"},
-    {172,"utf32 COLLATE utf32_lithuanian_ci"},
-    {173,"utf32 COLLATE utf32_slovak_ci"},
-    {174,"utf32 COLLATE utf32_spanish2_ci"},
-    {175,"utf32 COLLATE utf32_roman_ci"},
-    {176,"utf32 COLLATE utf32_persian_ci"},
-    {177,"utf32 COLLATE utf32_esperanto_ci"},
-    {178,"utf32 COLLATE utf32_hungarian_ci"},
-    {179,"utf32 COLLATE utf32_sinhala_ci"},
-    {180,"utf32 COLLATE utf32_german2_ci"},
-    {181,"utf32 COLLATE utf32_croatian_ci"},
-    {182,"utf32 COLLATE utf32_unicode_520_ci"},
-    {183,"utf32 COLLATE utf32_vietnamese_ci"},
-    {192,"utf8 COLLATE utf8_unicode_ci"},
-    {193,"utf8 COLLATE utf8_icelandic_ci"},
-    {194,"utf8 COLLATE utf8_latvian_ci"},
-    {195,"utf8 COLLATE utf8_romanian_ci"},
-    {196,"utf8 COLLATE utf8_slovenian_ci"},
-    {197,"utf8 COLLATE utf8_polish_ci"},
-    {198,"utf8 COLLATE utf8_estonian_ci"},
-    {199,"utf8 COLLATE utf8_spanish_ci"},
-    {200,"utf8 COLLATE utf8_swedish_ci"},
-    {201,"utf8 COLLATE utf8_turkish_ci"},
-    {202,"utf8 COLLATE utf8_czech_ci"},
-    {203,"utf8 COLLATE utf8_danish_ci"},
-    {204,"utf8 COLLATE utf8_lithuanian_ci"},
-    {205,"utf8 COLLATE utf8_slovak_ci"},
-    {206,"utf8 COLLATE utf8_spanish2_ci"},
-    {207,"utf8 COLLATE utf8_roman_ci"},
-    {208,"utf8 COLLATE utf8_persian_ci"},
-    {209,"utf8 COLLATE utf8_esperanto_ci"},
-    {210,"utf8 COLLATE utf8_hungarian_ci"},
-    {211,"utf8 COLLATE utf8_sinhala_ci"},
-    {212,"utf8 COLLATE utf8_german2_ci"},
-    {213,"utf8 COLLATE utf8_croatian_ci"},
-    {214,"utf8 COLLATE utf8_unicode_520_ci"},
-    {215,"utf8 COLLATE utf8_vietnamese_ci"},
-    {223,"utf8 COLLATE utf8_general_mysql500_ci"},
-    {224,"utf8mb4 COLLATE utf8mb4_unicode_ci"},
-    {225,"utf8mb4 COLLATE utf8mb4_icelandic_ci"},
-    {226,"utf8mb4 COLLATE utf8mb4_latvian_ci"},
-    {227,"utf8mb4 COLLATE utf8mb4_romanian_ci"},
-    {228,"utf8mb4 COLLATE utf8mb4_slovenian_ci"},
-    {229,"utf8mb4 COLLATE utf8mb4_polish_ci"},
-    {230,"utf8mb4 COLLATE utf8mb4_estonian_ci"},
-    {231,"utf8mb4 COLLATE utf8mb4_spanish_ci"},
-    {232,"utf8mb4 COLLATE utf8mb4_swedish_ci"},
-    {233,"utf8mb4 COLLATE utf8mb4_turkish_ci"},
-    {234,"utf8mb4 COLLATE utf8mb4_czech_ci"},
-    {235,"utf8mb4 COLLATE utf8mb4_danish_ci"},
-    {236,"utf8mb4 COLLATE utf8mb4_lithuanian_ci"},
-    {237,"utf8mb4 COLLATE utf8mb4_slovak_ci"},
-    {238,"utf8mb4 COLLATE utf8mb4_spanish2_ci"},
-    {239,"utf8mb4 COLLATE utf8mb4_roman_ci"},
-    {240,"utf8mb4 COLLATE utf8mb4_persian_ci"},
-    {241,"utf8mb4 COLLATE utf8mb4_esperanto_ci"},
-    {242,"utf8mb4 COLLATE utf8mb4_hungarian_ci"},
-    {243,"utf8mb4 COLLATE utf8mb4_sinhala_ci"},
-    {244,"utf8mb4 COLLATE utf8mb4_german2_ci"},
-    {245,"utf8mb4 COLLATE utf8mb4_croatian_ci"},
-    {246,"utf8mb4 COLLATE utf8mb4_unicode_520_ci"},
-    {247,"utf8mb4 COLLATE utf8mb4_vietnamese_ci"},
-    {248,"gb18030 COLLATE gb18030_chinese_ci"},
-    {249,"gb18030 COLLATE gb18030_bin"},
-    {250,"gb18030 COLLATE gb18030_unicode_520_ci"},
-	{0, NULL}
-};
-
-
-typedef enum mysql_state {
-	UNDEFINED,
-	LOGIN,
-	REQUEST,
-	RESPONSE_OK,
-	RESPONSE_MESSAGE,
-	RESPONSE_TABULAR,
-	RESPONSE_SHOW_FIELDS,
-	FIELD_PACKET,
-	ROW_PACKET,
-	RESPONSE_PREPARE,
-	PREPARED_PARAMETERS,
-	PREPARED_FIELDS,
-	AUTH_SWITCH_REQUEST,
-	AUTH_SWITCH_RESPONSE
-} mysql_state_t;
-
-typedef struct mysql_conn_data {	
-    uint16_t srv_caps;
-	uint16_t srv_caps_ext;
-	uint16_t clnt_caps;
-	uint16_t clnt_caps_ext;
-	mysql_state_t state;
-	uint16_t stmt_num_params;
-	uint16_t stmt_num_fields;
-	// wmem_tree_t* stmts;
-#ifdef CTDEBUG
-	uint32_t generation;
-#endif
-	uint8_t major_version;
-	uint32_t frame_start_ssl;
-	uint32_t frame_start_compressed;
-	uint8_t compressed_state;
-} mysql_conn_data_t;
-
-struct mysql_frame_data {
-	mysql_state_t state;
-};
-
-typedef struct my_stmt_data {
-	uint16_t nparam;
-	uint8_t* param_flags;
-} my_stmt_data_t;
-
-typedef struct mysql_exec_dissector {
-	uint8_t type;
-	uint8_t unsigned_flag;
-    void (*dissector)(struct buffer *buf);
-} mysql_exec_dissector_t;
-
-
-
-/* type constants */
-static const struct val_str type_constants[] = {
+static const struct val_str field_type_table[] = {
 	{0x00, "FIELD_TYPE_DECIMAL"    },
 	{0x01, "FIELD_TYPE_TINY"       },
 	{0x02, "FIELD_TYPE_SHORT"      },
@@ -502,8 +429,24 @@ static const struct val_str type_constants[] = {
 	{0, NULL}
 };
 
+typedef enum mysql_state {
+	UNDEFINED,
+	LOGIN,
+	REQUEST,
+	RESPONSE_OK,
+	RESPONSE_MESSAGE,
+	RESPONSE_TABULAR,
+	RESPONSE_SHOW_FIELDS,
+	FIELD_PACKET,
+	ROW_PACKET,
+	RESPONSE_PREPARE,
+	PREPARED_PARAMETERS,
+	PREPARED_FIELDS,
+	AUTH_SWITCH_REQUEST,
+	AUTH_SWITCH_RESPONSE
+} mysql_state_t;
 
-static const struct val_str state_vals[] = {
+static const struct val_str state_table[] = {
 	{UNDEFINED,            "undefined"},
 	{LOGIN,                "login"},
 	{REQUEST,              "request"},
@@ -520,5 +463,42 @@ static const struct val_str state_vals[] = {
 	{AUTH_SWITCH_RESPONSE, "authentication switch response"},
 	{0, NULL}
 };
+
+static inline const char *
+val_to_str(const struct val_str *val_strs, uint32_t val, char *def)
+{
+    struct val_str *p = (struct val_str *)val_strs - 1;
+    while ((++p)->str)
+    {
+        if (p->val == val)
+        {
+            return p->str;
+        }
+    }
+    return def;
+}
+
+static inline const char *
+mysql_get_command(uint32_t val, char *def)
+{
+    if (val >= sizeof(mysql_command_table)) {
+        return def;
+    }
+    return mysql_command_table[val];
+}
+
+static inline const char *
+mysql_get_charset(uint32_t val, char *def)
+{
+     if (val >= sizeof(mysql_charset_table)) {
+        return def;
+    }
+    return mysql_charset_table[val];
+}
+
+static inline const char*
+mysql_get_field_type(uint32_t val, char *def) {
+    return val_to_str(field_type_table, val, def);
+}
 
 #endif
