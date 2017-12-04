@@ -112,7 +112,7 @@ typedef struct mysql_exec_dissector
 {
     uint8_t type;
     uint8_t unsigned_flag;
-    void (*dissector)(struct buffer *buf);
+    void (*dissector)(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
 } mysql_exec_dissector_t;
 
 // 会话状态
@@ -159,17 +159,17 @@ static void mysql_dissect_ok_packet(struct buffer *buf, mysql_conn_data_t *conn_
 static void mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data);
 static int mysql_dissect_session_tracker_entry(struct buffer *buf);
 static void mysql_dissect_row_packet(struct buffer *buf);
-static void mysql_dissect_exec_string(struct buffer *buf);
-static void mysql_dissect_exec_time(struct buffer *buf);
-static void mysql_dissect_exec_datetime(struct buffer *buf);
-static void mysql_dissect_exec_tiny(struct buffer *buf);
-static void mysql_dissect_exec_short(struct buffer *buf);
-static void mysql_dissect_exec_long(struct buffer *buf);
-static void mysql_dissect_exec_float(struct buffer *buf);
-static void mysql_dissect_exec_double(struct buffer *buf);
-static void mysql_dissect_exec_longlong(struct buffer *buf);
-static void mysql_dissect_exec_null(struct buffer *buf);
-static char mysql_dissect_exec_param(struct buffer *buf, uint8_t param_flags);
+static void mysql_dissect_exec_string(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static void mysql_dissect_exec_time(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static void mysql_dissect_exec_datetime(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static void mysql_dissect_exec_tiny(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static void mysql_dissect_exec_short(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static void mysql_dissect_exec_long(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static void mysql_dissect_exec_float(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static void mysql_dissect_exec_double(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static void mysql_dissect_exec_longlong(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static void mysql_dissect_exec_null(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
+static char mysql_dissect_exec_param(struct buffer *buf, int *param_idx, uint8_t param_flags);
 static void mysql_dissect_response_prepare(struct buffer *buf, mysql_conn_data_t *conn_data);
 
 static struct mysql_conn_data *
@@ -1189,14 +1189,14 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
 
     case MYSQL_STMT_CLOSE:
     {
-        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
+        uint32_t stmt_id = buf_readInt32LE(buf);
         mysql_set_conn_state(conn_data, REQUEST);
     }
     break;
 
     case MYSQL_STMT_RESET:
     {
-        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
+        uint32_t stmt_id = buf_readInt32LE(buf);
         mysql_set_conn_state(conn_data, RESPONSE_OK);
     }
     break;
@@ -1289,7 +1289,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
 
     case MYSQL_STMT_FETCH:
     {
-        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
+        uint32_t stmt_id = buf_readInt32LE(buf);
         uint32_t mysql_num_rows = buf_readInt32LE(buf);
     }
         mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
@@ -1297,8 +1297,8 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
 
     case MYSQL_STMT_SEND_LONG_DATA:
     {
-        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
-        khint_t k = kh_get(stmts, conn_data->stmts, mysql_stmt_id);
+        uint32_t stmt_id = buf_readInt32LE(buf);
+        khint_t k = kh_get(stmts, conn_data->stmts, stmt_id);
         int is_missing = (k == kh_end(conn_data->stmts));
         if (is_missing)
         {
@@ -1306,7 +1306,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
         }
         else
         {
-            struct mysql_stmt_data *stmt_data = kh_value(conn_data->stmts, mysql_stmt_id);
+            struct mysql_stmt_data *stmt_data = kh_value(conn_data->stmts, stmt_id);
             uint16_t data_param = buf_readInt16(buf);
             if (stmt_data->nparam > data_param)
             {
@@ -1325,48 +1325,51 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
 
     case MYSQL_STMT_EXECUTE:
     {
-        uint32_t mysql_stmt_id = buf_readInt32LE(buf);
-        uint8_t mysql_exec_flags = buf_readInt8(buf);
-        uint32_t mysql_exec_iter = buf_readInt32LE(buf);
-        int stmt_pos;
+        uint32_t stmt_id = buf_readInt32LE(buf);
+        uint8_t exec_flags = buf_readInt8(buf);
+        uint32_t exec_iter = buf_readInt32LE(buf);
 
-        khint_t k = kh_get(stmts, conn_data->stmts, mysql_stmt_id);
+        LOG_INFO("Mysql Statement Id %u, Flags 0x%02x, Iter %u",
+                 stmt_id, exec_flags, exec_iter);
+
+        khint_t k = kh_get(stmts, conn_data->stmts, stmt_id);
         int is_missing = (k == kh_end(conn_data->stmts));
+        // 无元信息, 无法解析 STMT 参数~
         if (is_missing)
         {
             if (buf_readable(buf))
             {
                 buf_readCStr(buf, g_buf, BUFSZ);
                 // mysql prepare response needed
-                // 无元信息, 无法解析 STMT 参数~
                 // LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
             }
         }
         else
         {
-            struct mysql_stmt_data *stmt_data = kh_value(conn_data->stmts, mysql_stmt_id);
+            struct mysql_stmt_data *stmt_data = kh_value(conn_data->stmts, stmt_id);
             if (stmt_data->nparam != 0)
             {
-                // TODO test
                 int n = (stmt_data->nparam + 7) / 8; /* NULL bitmap */
                 buf_retrieve(buf, n);
+
                 uint8_t stmt_bound = buf_readInt8(buf);
-                if (stmt_bound == 1)
+                if (stmt_bound == 1) // First Call Or Rebound
                 {
+                    int stmt_pos;
+                    // 内存布局: 类型1(2byte),类型2(2byte),...值1,值2
+                    int param_idx = buf_getReadIndex(buf) + stmt_data->nparam * 2;
                     for (stmt_pos = 0; stmt_pos < stmt_data->nparam; stmt_pos++)
                     {
-                        if (!mysql_dissect_exec_param(buf, stmt_data->param_flags[stmt_pos]))
+                        if (!mysql_dissect_exec_param(buf, &param_idx, stmt_data->param_flags[stmt_pos]))
                             break;
                     }
                 }
             }
         }
 
-        if (buf_readable(buf))
-        {
-            // buf_readStr(buf, g_buf, BUFSZ);
-            // LOG_INFO("Mysql Payload: %s", g_buf); // TODO null str ???
-        }
+        // TODO 计算 value 的总长度
+        // 消耗掉 已经处理的 value, 和可能附加的其他数据
+        buf_retrieveAll(buf);
     }
         mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
         break;
@@ -1810,17 +1813,23 @@ static const mysql_exec_dissector_t mysql_exec_dissectors[] = {
 };
 
 static void
-mysql_dissect_exec_string(struct buffer *buf)
+mysql_dissect_exec_string(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
+    int idx = buf_getReadIndex(buf);
+    buf_setReadIndex(buf, *param_idx);
+    *param_idx += sizeof(uint8_t);
+
     uint32_t param_len = buf_readInt8(buf);
 
     switch (param_len)
     {
     case 0xfc: /* 252 - 64k chars */
         param_len = buf_readInt16LE(buf);
+        *param_idx += sizeof(uint16_t);
         break;
     case 0xfd: /* 64k - 16M chars */
         param_len = buf_readInt32LE24(buf);
+        *param_idx += 3;
         break;
     default: /* < 252 chars */
         break;
@@ -1828,12 +1837,19 @@ mysql_dissect_exec_string(struct buffer *buf)
 
     buf_readStr(buf, g_buf, param_len);
     LOG_INFO("String %s", g_buf);
+    *param_idx += param_len;
+
+    buf_setReadIndex(buf, idx);
 }
 
 static void
-mysql_dissect_exec_time(struct buffer *buf)
+mysql_dissect_exec_time(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
+    int idx = buf_getReadIndex(buf);
+    buf_setReadIndex(buf, *param_idx);
+
     uint8_t param_len = buf_readInt8(buf);
+    *param_idx += sizeof(uint8_t);
 
     uint8_t mysql_exec_field_time_sign = 0;
     uint32_t mysql_exec_field_time_days = 0;
@@ -1845,33 +1861,46 @@ mysql_dissect_exec_time(struct buffer *buf)
     if (param_len >= 1)
     {
         mysql_exec_field_time_sign = buf_readInt8(buf);
+        *param_idx += sizeof(uint8_t);
     }
     if (param_len >= 5)
     {
         mysql_exec_field_time_days = buf_readInt32LE(buf);
+        *param_idx += 3;
     }
     if (param_len >= 8)
     {
         mysql_exec_field_hour = buf_readInt8(buf);
         mysql_exec_field_minute = buf_readInt8(buf);
         mysql_exec_field_second = buf_readInt8(buf);
+        *param_idx += sizeof(uint8_t);
+        *param_idx += sizeof(uint8_t);
+        *param_idx += sizeof(uint8_t);
     }
     if (param_len >= 12)
     {
         mysql_exec_field_second_b = buf_readInt32LE(buf);
+        *param_idx += sizeof(uint32_t);
     }
 
     // 处理掉 > 12 部分
     if (param_len - 12)
     {
         buf_retrieve(buf, param_len - 12);
+        *param_idx += param_len - 12;
     }
+
+    buf_setReadIndex(buf, idx);
 }
 
 static void
-mysql_dissect_exec_datetime(struct buffer *buf)
+mysql_dissect_exec_datetime(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
+    int idx = buf_getReadIndex(buf);
+    buf_setReadIndex(buf, *param_idx);
+
     uint8_t param_len = buf_readInt8(buf);
+    *param_idx += sizeof(uint8_t);
 
     uint16_t mysql_exec_field_year = 0;
     uint8_t mysql_exec_field_month = 0;
@@ -1884,76 +1913,154 @@ mysql_dissect_exec_datetime(struct buffer *buf)
     if (param_len >= 2)
     {
         mysql_exec_field_year = buf_readInt16LE(buf);
+        *param_idx += sizeof(uint16_t);
     }
     if (param_len >= 4)
     {
         mysql_exec_field_month = buf_readInt8(buf);
         mysql_exec_field_day = buf_readInt8(buf);
+        *param_idx += sizeof(uint8_t);
+        *param_idx += sizeof(uint8_t);
     }
     if (param_len >= 7)
     {
         mysql_exec_field_hour = buf_readInt8(buf);
         mysql_exec_field_minute = buf_readInt8(buf);
         mysql_exec_field_second = buf_readInt8(buf);
+        *param_idx += sizeof(uint8_t);
+        *param_idx += sizeof(uint8_t);
+        *param_idx += sizeof(uint8_t);
     }
     if (param_len >= 11)
     {
         mysql_exec_field_second_b = buf_readInt32LE(buf);
+        *param_idx += sizeof(uint32_t);
     }
 
     // 处理掉 > 12 部分
     if (param_len - 11)
     {
         buf_retrieve(buf, param_len - 11);
+        *param_idx += param_len - 11;
     }
+
+    buf_setReadIndex(buf, idx);
 }
 
 static void
-mysql_dissect_exec_tiny(struct buffer *buf)
+mysql_dissect_exec_tiny(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
-    uint8_t mysql_exec_field_tiny = buf_readInt8(buf);
-    LOG_INFO("Mysql Exec Tiny %hhu", mysql_exec_field_tiny);
+    int idx = buf_getReadIndex(buf);
+    buf_setReadIndex(buf, *param_idx);
+
+    uint8_t mysql_exec_field_tiny = buf_peekInt8(buf);
+    *param_idx += sizeof(uint8_t);
+
+    if (param_unsigned)
+    {
+        LOG_INFO("Mysql Exec Tiny %hhu", mysql_exec_field_tiny);
+    }
+    else
+    {
+        LOG_INFO("Mysql Exec Tiny %hhd", (int8_t)mysql_exec_field_tiny);
+    }
+
+    buf_setReadIndex(buf, idx);
 }
 
 static void
-mysql_dissect_exec_short(struct buffer *buf)
+mysql_dissect_exec_short(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
-    uint16_t mysql_exec_field_short = buf_readInt16LE(buf);
-    LOG_INFO("Mysql Exec Short %hu", mysql_exec_field_short);
+    int idx = buf_getReadIndex(buf);
+    buf_setReadIndex(buf, *param_idx);
+
+    uint16_t mysql_exec_field_short = buf_peekInt16LE(buf);
+    *param_idx += sizeof(uint16_t);
+    if (param_unsigned)
+    {
+        LOG_INFO("Mysql Exec Short %hu", mysql_exec_field_short);
+    }
+    else
+    {
+        LOG_INFO("Mysql Exec Short %hd", (int16_t)mysql_exec_field_short);
+    }
+
+    buf_setReadIndex(buf, idx);
 }
 
 static void
-mysql_dissect_exec_long(struct buffer *buf)
+mysql_dissect_exec_long(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
-    uint32_t mysql_exec_field_long = buf_readInt32LE(buf);
-    LOG_INFO("Mysql Exec Long %u", mysql_exec_field_long);
+    int idx = buf_getReadIndex(buf);
+    buf_setReadIndex(buf, *param_idx);
+
+    uint32_t mysql_exec_field_long = buf_peekInt32LE(buf);
+    *param_idx += sizeof(uint32_t);
+    if (param_unsigned)
+    {
+        LOG_INFO("Mysql Exec Long %u", mysql_exec_field_long);
+    }
+    else
+    {
+        LOG_INFO("Mysql Exec Long %d", (int32_t)mysql_exec_field_long);
+    }
+
+    buf_setReadIndex(buf, idx);
 }
 
 static void
-mysql_dissect_exec_float(struct buffer *buf)
+mysql_dissect_exec_float(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
-    float mysql_exec_field_float = buf_readInt32LE(buf);
+    int idx = buf_getReadIndex(buf);
+    buf_setReadIndex(buf, *param_idx);
+
+    // 注意 这里不是小端
+    float mysql_exec_field_float = *((float *)buf_peek(buf));
+    *param_idx += sizeof(uint32_t);
     LOG_INFO("Mysql Exec Float %f", mysql_exec_field_float);
+
+    buf_setReadIndex(buf, idx);
 }
 
 static void
-mysql_dissect_exec_double(struct buffer *buf)
+mysql_dissect_exec_double(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
-    double mysql_exec_field_double = buf_readInt64LE(buf);
+    int idx = buf_getReadIndex(buf);
+    buf_setReadIndex(buf, *param_idx);
+
+    // 注意 这里不是小端
+    double mysql_exec_field_double = *((double *)buf_peek(buf));
+    *param_idx += sizeof(uint64_t);
     LOG_INFO("Mysql Exec Double %f", mysql_exec_field_double);
+
+    buf_setReadIndex(buf, idx);
 }
 
 static void
-mysql_dissect_exec_longlong(struct buffer *buf)
+mysql_dissect_exec_longlong(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
-    uint64_t mysql_exec_field_longlong = buf_readInt64LE(buf);
-    LOG_INFO("Mysql Exec LongLong %llu", mysql_exec_field_longlong);
+    int idx = buf_getReadIndex(buf);
+    buf_setReadIndex(buf, *param_idx);
+
+    uint64_t mysql_exec_field_longlong = buf_peekInt64LE(buf);
+    *param_idx += sizeof(uint64_t);
+    if (param_unsigned)
+    {
+        LOG_INFO("Mysql Exec LongLong %llu", mysql_exec_field_longlong);
+    }
+    else
+    {
+        LOG_INFO("Mysql Exec LongLong %lld", (int64_t)mysql_exec_field_longlong);
+    }
+
+    buf_setReadIndex(buf, idx);
 }
 
 static void
-mysql_dissect_exec_null(struct buffer *buf)
+mysql_dissect_exec_null(struct buffer *buf, uint8_t param_unsigned, int *param_idx)
 {
     LOG_INFO("Mysql Exec NULL");
+    // TODO test NULL 是否消耗 value 字节数
 }
 
 // length coded binary: a variable-length number
@@ -1965,15 +2072,18 @@ mysql_dissect_exec_null(struct buffer *buf)
 // Length Coded String is these three hexadecimal bytes: 02 61 62, which means "length = 2, contents = 'ab'".
 
 static char
-mysql_dissect_exec_param(struct buffer *buf, uint8_t param_flags)
+mysql_dissect_exec_param(struct buffer *buf, int *param_idx, uint8_t param_flags)
 {
     int dissector_index = 0;
 
     uint8_t param_type = buf_readInt8(buf);
     uint8_t param_unsigned = buf_readInt8(buf); /* signedness */
+    // TODO LOG_INFO
+    LOG_ERROR("Type [%s](%d)", mysql_get_field_type(param_type, "未知类型"), param_type);
+
     if ((param_flags & MYSQL_PARAM_FLAG_STREAMED) == MYSQL_PARAM_FLAG_STREAMED)
     {
-        // LOG_INFO("Streamed Parameter");
+        LOG_INFO("Streamed Parameter");
         return 1;
     }
     while (mysql_exec_dissectors[dissector_index].dissector != NULL)
@@ -1981,7 +2091,7 @@ mysql_dissect_exec_param(struct buffer *buf, uint8_t param_flags)
         if (mysql_exec_dissectors[dissector_index].type == param_type &&
             mysql_exec_dissectors[dissector_index].unsigned_flag == param_unsigned)
         {
-            mysql_exec_dissectors[dissector_index].dissector(buf);
+            mysql_exec_dissectors[dissector_index].dissector(buf, param_unsigned, param_idx);
             return 1;
         }
         dissector_index++;
@@ -1997,6 +2107,9 @@ mysql_dissect_response_prepare(struct buffer *buf, mysql_conn_data_t *conn_data)
     uint32_t stmt_id = buf_readInt32LE(buf);
     conn_data->stmt_num_fields = buf_readInt16LE(buf);
     conn_data->stmt_num_params = buf_readInt16LE(buf);
+
+    LOG_INFO("Mysql Statement Id %u, Fields %us, Params %us",
+             stmt_id, conn_data->stmt_num_fields, conn_data->stmt_num_params);
 
     // FIX 5.7 EOF 问题
     // TODO TODO
