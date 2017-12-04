@@ -15,21 +15,20 @@
 /*
 TODO:
 
-    // FIX 5.7 EOF 问题
-    // TODO TODO
-    conn_data->num_fields = conn_data->stmt_num_params;
 
-0. 释放 mysql_dissect_response_prepare 申请的内存
+// FIX 5.7 EOF 问题
+// TODO TODO
+// conn_data->num_fields = conn_data->stmt_num_params;
+1. 处理 mysql 5.7 协议变更, 无 EOF packet
 0. 5.7 新协议 有问题 SET NAMES utf8 返回 解析有问题,, 状态不对...读到 ResultSet 了
 0. 加大量 文字注释: http://hutaow.com/blog/2013/11/06/mysql-protocol-analysis/
-1. 处理 mysql 5.7 协议变更, 无 EOF packet
-6. 测试 exec 各种类型
 7. 打印 Server 和 Client 的能力
 5. 支持 统计 sql 执行时间
 1. sannitizer 测试
 
+
 OK: 支持多mysql端口
-OK: 测试 新旧 两种协议 同时连接的场景 ~
+OK: 测试 新旧 两种协议 同时连接的场景
 用简单的 strmap 处理 ResultSet 结果集?!  string <=> string
 */
 
@@ -126,7 +125,6 @@ struct mysql_conn_data
     uint16_t stmt_num_params;
     uint16_t stmt_num_fields;
     khash_t(stmts) * stmts;
-    uint8_t major_version;
     uint32_t frame_start_ssl;
     uint32_t frame_start_compressed;
     uint8_t compressed_state;
@@ -137,15 +135,13 @@ struct mysql_conn_data
     char *user;
 };
 
-static int buf_strsize(struct buffer *buf);
 static uint64_t buf_readFle(struct buffer *buf, uint64_t *len, uint8_t *is_null);
 static int buf_peekFleLen(struct buffer *buf);
 static int buf_dupFleStr(struct buffer *buf, char **str);
-
-static uint32_t get_mysql_pdu_len(struct buffer *buf);
-static void mysql_dissect_compressed_header(struct buffer *buf);
-bool is_completed_mysql_pdu(struct buffer *buf);
-
+bool mysql_is_completed_pdu(struct buffer *buf);
+static struct mysql_stmt_data *mysql_stmt_data_create(uint16_t nparam);
+static void mysql_stmt_data_release(struct mysql_stmt_data *stmt_data);
+static void mysql_dissect_auth_switch_request(struct buffer *buf, mysql_conn_data_t *conn_data);
 static void mysql_dissect_auth_switch_response(struct buffer *buf, mysql_conn_data_t *conn_data);
 static void mysql_dissect_error_packet(struct buffer *buf);
 static void mysql_set_conn_state(mysql_conn_data_t *conn_data, mysql_state_t state);
@@ -171,6 +167,19 @@ static void mysql_dissect_exec_longlong(struct buffer *buf, uint8_t param_unsign
 static void mysql_dissect_exec_null(struct buffer *buf, uint8_t param_unsigned, int *param_idx);
 static char mysql_dissect_exec_param(struct buffer *buf, int *param_idx, uint8_t param_flags);
 static void mysql_dissect_response_prepare(struct buffer *buf, mysql_conn_data_t *conn_data);
+static void mysql_print_bytes(const char *payload, size_t size);
+
+static void mysql_print_bytes(const char *payload, size_t size)
+{
+    const char *tmp_ptr = payload;
+    int byte_cnt = 0;
+    while (byte_cnt++ < size)
+    {
+        printf("%c", *tmp_ptr);
+        tmp_ptr++;
+    }
+    printf("\n");
+}
 
 static struct mysql_conn_data *
 mysql_conn_data_create()
@@ -186,7 +195,6 @@ mysql_conn_data_create()
     d->clnt_caps_ext = 0;
     d->state = UNDEFINED;
     d->stmts = kh_init(stmts);
-    d->major_version = 0;
     d->frame_start_ssl = 0;
     d->frame_start_compressed = 0;
     d->compressed_state = MYSQL_COMPRESS_NONE;
@@ -203,6 +211,17 @@ mysql_conn_data_release(struct mysql_conn_data *d)
     {
         free(d->user);
     }
+
+    // 释放保存的所有事务元信息
+    struct mysql_stmt_data* stmt_data;
+    khint_t k;
+    for (k = kh_begin(d->stmts); k != kh_end(d->stmts); ++k) {
+        if (kh_exist(d->stmts, k)) {
+            stmt_data = kh_value(d->stmts, k);
+            mysql_stmt_data_release(stmt_data);
+        }
+    }
+
     kh_destroy(stmts, d->stmts);
     free(d);
 }
@@ -382,22 +401,22 @@ static struct mysql_session *
 mysql_ss_add_internal(struct mysql_ss *ss, struct tuple4 *t4)
 {
     int i;
-    struct mysql_session *head, *new;
+    struct mysql_session *new;
     for (i = 0; i < ss->sz; i++)
     {
         if (ss->serv_ports[i] == t4->serv_port)
         {
             int idx = SESSION_BK_IDX(t4->cli_port);
             new = mysql_session_create(t4);
-            if (new == NULL)
+            if (new == NULL) {
                 assert(false);
+            }
             new->next = ss->serv[i]->bk[idx];
             ss->serv[i]->bk[idx] = new;
             return new;
         }
     }
-
-    assert(false); // TODO
+    assert(false);
     return NULL;
 }
 
@@ -447,6 +466,41 @@ mysql_session_getbuf(struct mysql_session *s, struct tuple4 *t4, uint16_t s_port
     }
 }
 
+// TODO 测试 nparam = 0
+static struct mysql_stmt_data *
+mysql_stmt_data_create(uint16_t nparam)
+{
+    struct mysql_stmt_data *stmt_data = calloc(1, sizeof(*stmt_data));
+    if (stmt_data == NULL)
+    {
+        return NULL;
+    }
+    stmt_data->nparam = nparam;
+
+    if (nparam)
+    {
+        int flagsize = (int)(sizeof(uint8_t) * nparam);
+        stmt_data->param_flags = (uint8_t *)malloc(flagsize);
+        if (stmt_data->param_flags == NULL)
+        {
+            free(stmt_data);
+            return NULL;
+        }
+        memset(stmt_data->param_flags, 0, flagsize);
+    }
+    return stmt_data;
+}
+
+static void
+mysql_stmt_data_release(struct mysql_stmt_data *stmt_data)
+{
+    if (stmt_data->param_flags)
+    {
+        free(stmt_data->param_flags);
+    }
+    free(stmt_data);
+}
+
 void pkt_handle(void *ud,
                 const struct pcap_pkthdr *pkt_hdr,
                 const struct ip *ip_hdr,
@@ -458,8 +512,6 @@ void pkt_handle(void *ud,
     static struct tuple4 t4;
     static char s_ip_buf[INET_ADDRSTRLEN];
     static char d_ip_buf[INET_ADDRSTRLEN];
-
-    struct mysql_half_conn *c;
 
     uint32_t s_ip = ip_hdr->ip_src.s_addr;
     uint16_t s_port = ntohs(tcp_hdr->th_sport);
@@ -492,22 +544,28 @@ void pkt_handle(void *ud,
     bool is_response;
     struct mysql_session *s = mysql_ss_get(ss, &t4);
     struct buffer *buf = mysql_session_getbuf(s, &t4, s_port, &is_response);
-
-    // TODO remove
-    if (is_response)
-    {
-        LOG_ERROR("RESPONSE");
-    }
-    else
-    {
-        LOG_ERROR("REQUEST");
-    }
-
     buf_append(buf, (const char *)payload, payload_size);
 
     // 一个 tcp segment 包括 N 个 Mysql Packet
-    while (is_completed_mysql_pdu(buf))
+    while (mysql_is_completed_pdu(buf))
     {
+        if (s->conn_data->frame_start_compressed &&
+            s->conn_data->compressed_state == MYSQL_COMPRESS_ACTIVE)
+        {
+            LOG_INFO("Start Compressed Active");
+            /*
+ * Decode the header of a compressed packet
+ * https://dev.mysql.com/doc/internals/en/compressed-packet-header.html
+ */
+            int32_t cmp_pkt_sz = buf_readInt32LE24(buf);
+            uint8_t cmp_pkt_num = buf_readInt8(buf);
+            int32_t cmp_pkt_uncmp_sz = buf_readInt32LE24(buf);
+
+            UNUSED(cmp_pkt_sz);
+            UNUSED(cmp_pkt_num);
+            UNUSED(cmp_pkt_uncmp_sz);
+        }
+
         int32_t pkt_sz = buf_readInt32LE24(buf);
         uint8_t pkt_num = buf_readInt8(buf);
         LOG_INFO("%s:%d > %s:%d pkt_sz %d, pkt_no %d", s_ip_buf, s_port, d_ip_buf, d_port, pkt_sz, pkt_num);
@@ -536,18 +594,11 @@ void pkt_handle(void *ud,
             if (s->conn_data->state == LOGIN && (pkt_num == 1 || (pkt_num == 2 && is_ssl)))
             {
                 mysql_dissect_login(rbuf, s->conn_data);
-                if (pkt_num == 2 && is_ssl)
-                {
-                    PANIC("SLL NOT SUPPORT");
-                }
-                // TODO 处理 SSL
-                /*
                 if ((s->conn_data->srv_caps & MYSQL_CAPS_CP) && (s->conn_data->clnt_caps & MYSQL_CAPS_CP))
                 {
-                    s->conn_data->frame_start_compressed = pinfo->num;
+                    s->conn_data->frame_start_compressed = 1;
                     s->conn_data->compressed_state = MYSQL_COMPRESS_INIT;
                 }
-                */
             }
             else
             {
@@ -597,65 +648,30 @@ int main(int argc, char **argv)
     return 0;
 }
 
-static int buf_strsize(struct buffer *buf)
-{
-    const char *eos = buf_findChar(buf, '\0');
-    if (eos == NULL)
-    {
-        return buf_readable(buf);
-    }
-    else
-    {
-        return eos - buf_peek(buf);
-    }
-}
-
-static uint32_t
-get_mysql_pdu_len(struct buffer *buf)
+bool mysql_is_completed_pdu(struct buffer *buf)
 {
     int total_sz = buf_readable(buf);
-    uint32_t pkt_sz = buf_readInt32LE24(buf);
+    if (total_sz < 4) /* regular header 3+1 (len+id) */
+    {
+        return false;
+    }
 
+    int32_t pkt_sz = buf_peekInt32LE24(buf);
+    if (pkt_sz <= 0 || pkt_sz >= MYSQL_MAX_PACKET_LEN)
+    {
+        PANIC("Malformed Mysql Packet (size=%d)\n", pkt_sz);
+        return false;
+    }
+
+    // TODO ?
     if ((total_sz - pkt_sz) == 7)
     {
-        return pkt_sz + 7; /* compressed header 3+1+3 (len+id+cmp_len) */
+        return total_sz >= pkt_sz + 7; /* compressed header 3+1+3 (len+id+cmp_len) */
     }
     else
     {
-        return pkt_sz + 4; /* regular header 3+1 (len+id) */
+        return total_sz >= pkt_sz + 4; /* regular header 3+1 (len+id) */
     }
-}
-
-/*
- * Decode the header of a compressed packet
- * https://dev.mysql.com/doc/internals/en/compressed-packet-header.html
- */
-static void
-mysql_dissect_compressed_header(struct buffer *buf)
-{
-    int32_t cmp_pkt_sz = buf_readInt32LE24(buf);
-    uint8_t cmp_pkt_num = buf_readInt8(buf);
-    int32_t cmp_pkt_uncmp_sz = buf_readInt32LE24(buf);
-
-    UNUSED(cmp_pkt_sz);
-    UNUSED(cmp_pkt_num);
-    UNUSED(cmp_pkt_uncmp_sz);
-}
-
-// TOOD 未处理 compressed header
-bool is_completed_mysql_pdu(struct buffer *buf)
-{
-    if (buf_readable(buf) < 4) /* regular header 3+1 (len+id) */
-    {
-        return false;
-    }
-    int32_t sz = buf_peekInt32LE24(buf);
-    if (sz <= 0 || sz >= MYSQL_MAX_PACKET_LEN)
-    {
-        PANIC("Malformed Mysql Packet (size=%d)\n", sz);
-        return false;
-    }
-    return buf_readable(buf) >= sz + 4;
 }
 
 /**
@@ -895,19 +911,6 @@ mysql_dissect_greeting(struct buffer *buf, mysql_conn_data_t *conn_data)
     buf_readCStr(buf, g_buf, BUFSZ);
     LOG_INFO("Server Version: %s", g_buf);
 
-    // TODO 获取 major version
-    /* version string */
-    conn_data->major_version = 0;
-    // char * eos = buf_findChar(buf, '\0');
-    // assert(eos);
-    // int lenstr = eos - buf_peek(buf);
-    // int ver_offset;
-    // for (ver_offset = 0; ver_offset < lenstr; ver_offset++) {
-    // 	guint8 ver_char = tvb_get_guint8(tvb, offset + ver_offset);
-    // 	if (ver_char == '.') break;
-    // 	conn_data->major_version = conn_data->major_version * 10 + ver_char - '0';
-    // }
-
     /* 4 bytes little endian thread_id */
     int thread_id = buf_readInt32LE(buf);
     LOG_INFO("Server Thread Id %d", thread_id);
@@ -931,8 +934,6 @@ mysql_dissect_greeting(struct buffer *buf, mysql_conn_data_t *conn_data)
         return;
     }
 
-    // TODO 打印信息
-
     /* 1 byte Charset */
     int8_t charset = buf_readInt8(buf);
     LOG_INFO("Server Charset [%s](0x%02x)", mysql_get_charset(charset, "未知编码"), charset);
@@ -947,6 +948,7 @@ mysql_dissect_greeting(struct buffer *buf, mysql_conn_data_t *conn_data)
 
     /* 1 byte Auth Plugin Length */
     int8_t auto_plugin_len = buf_readInt8(buf);
+    UNUSED(auto_plugin_len);
 
     /* 10 bytes unused */
     buf_retrieve(buf, 10);
@@ -972,7 +974,6 @@ mysql_dissect_error_packet(struct buffer *buf)
     int16_t errno = buf_readInt16LE(buf);
     LOG_ERROR("Error Code %d", errno);
 
-    char *sqlstate;
     const char *c = buf_peek(buf);
     if (*c == '#')
     {
@@ -994,8 +995,6 @@ static void
 mysql_dissect_login(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
     LOG_INFO("Login Request");
-
-    int lenstr;
 
     /* after login there can be OK or DENIED */
     mysql_set_conn_state(conn_data, RESPONSE_OK);
@@ -1019,9 +1018,9 @@ NullTerminatedString	Client Auth Plugin: e.g. mysql_native_password
     /* Next packet will be use SSL */
     if (!(conn_data->frame_start_ssl) && conn_data->clnt_caps & MYSQL_CAPS_SL)
     {
-        // "Response: SSL Handshake"
-        // conn_data->frame_start_ssl = pinfo->num;
-        // ssl_starttls_ack(ssl_handle, pinfo, mysql_handle);
+        LOG_INFO("Response: SSL Handshake");
+        conn_data->frame_start_ssl = 1;
+        PANIC("不支持 SSL Mysql 协议");
     }
 
     uint32_t maxpkt;
@@ -1054,6 +1053,7 @@ NullTerminatedString	Client Auth Plugin: e.g. mysql_native_password
     /* User name */
     buf_readCStr(buf, g_buf, BUFSZ);
     LOG_INFO("Client User %s", g_buf);
+    conn_data->user = strdup(g_buf);
 
     /* rest is optional */
     if (!buf_readable(buf))
@@ -1071,7 +1071,8 @@ NullTerminatedString	Client Auth Plugin: e.g. mysql_native_password
     {
         buf_readCStr(buf, g_buf, BUFSZ);
     }
-    // LOG_INFO("Client Password %s", g_buf);
+    LOG_INFO("Client Password:");
+    mysql_print_bytes(g_buf, strlen(g_buf));
 
     if (!buf_readable(buf))
     {
@@ -1109,8 +1110,6 @@ NullTerminatedString	Client Auth Plugin: e.g. mysql_native_password
 static int
 mysql_dissect_attributes(struct buffer *buf)
 {
-    int lenfle;
-
     char *mysql_connattrs_name = NULL;
     char *mysql_connattrs_value = NULL;
 
@@ -1120,6 +1119,25 @@ mysql_dissect_attributes(struct buffer *buf)
     free(mysql_connattrs_name);
     free(mysql_connattrs_value);
     return name_len + val_len;
+}
+
+static void
+mysql_dissect_auth_switch_request(struct buffer *buf, mysql_conn_data_t *conn_data)
+{
+    LOG_INFO("Auth Switch Request");
+    mysql_set_conn_state(conn_data, AUTH_SWITCH_RESPONSE);
+
+    /* Status (Always 0xfe) */
+    uint8_t request_status = buf_readInt8(buf);
+    UNUSED(request_status);
+
+    /* name */
+    buf_readCStr(buf, g_buf, BUFSZ);
+    LOG_INFO("Request Name: %s", g_buf);
+
+    /* Data */
+    buf_readCStr(buf, g_buf, BUFSZ);
+    LOG_INFO("Request Data: %s", g_buf);
 }
 
 static void
@@ -1133,11 +1151,6 @@ mysql_dissect_auth_switch_response(struct buffer *buf, mysql_conn_data_t *conn_d
 static void
 mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
 {
-    int lenstr;
-    uint32_t stmt_id;
-    struct mysql_stmt_data *stmt_data;
-    int stmt_pos, param_offset;
-
     if (conn_data->state == AUTH_SWITCH_RESPONSE)
     {
         LOG_INFO("Request");
@@ -1190,6 +1203,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     case MYSQL_STMT_CLOSE:
     {
         uint32_t stmt_id = buf_readInt32LE(buf);
+        LOG_INFO("Mysql Statement Close %u", stmt_id);
         mysql_set_conn_state(conn_data, REQUEST);
     }
     break;
@@ -1197,19 +1211,21 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     case MYSQL_STMT_RESET:
     {
         uint32_t stmt_id = buf_readInt32LE(buf);
+        LOG_INFO("Mysql Reset Statement %u", stmt_id);
         mysql_set_conn_state(conn_data, RESPONSE_OK);
     }
     break;
 
     case MYSQL_FIELD_LIST:
         buf_readCStr(buf, g_buf, BUFSZ);
-        LOG_INFO("Mysql Table Name: %s", g_buf);
+        LOG_INFO("Mysql Table Name %s", g_buf);
         mysql_set_conn_state(conn_data, RESPONSE_SHOW_FIELDS);
         break;
 
     case MYSQL_PROCESS_KILL:
     {
         uint32_t mysql_thd_id = buf_readInt32LE(buf);
+        LOG_INFO("Mysql Kill Thread ID %u", mysql_thd_id);
     }
         mysql_set_conn_state(conn_data, RESPONSE_OK);
         break;
@@ -1219,7 +1235,6 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
         buf_readCStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql User %s", g_buf);
 
-        char *mysql_passwd = NULL;
         if (conn_data->clnt_caps & MYSQL_CAPS_SC)
         {
             int len = buf_readInt8(buf);
@@ -1229,7 +1244,8 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
         {
             buf_readCStr(buf, g_buf, BUFSZ);
         }
-        // LOG_INFO("Mysql Password %s", mysql_passwd);
+        LOG_INFO("Mysql Password: ");
+        mysql_print_bytes(g_buf, strlen(g_buf));
 
         buf_readCStr(buf, g_buf, BUFSZ);
         LOG_INFO("Mysql Schema %s", g_buf);
@@ -1243,7 +1259,6 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     }
         mysql_set_conn_state(conn_data, RESPONSE_OK);
 
-        char *mysql_client_auth_plugin = NULL;
         /* optional: authentication plugin */
         if (conn_data->clnt_caps_ext & MYSQL_CAPS_PA)
         {
@@ -1260,7 +1275,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
             uint64_t connattrs_length = buf_readFle(buf, &lenfle, NULL);
             while (connattrs_length > 0)
             {
-                int length = mysql_dissect_attributes(buf);
+                length = mysql_dissect_attributes(buf);
                 connattrs_length -= length;
             }
         }
@@ -1269,6 +1284,8 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     case MYSQL_REFRESH:
     {
         uint8_t mysql_refresh = buf_readInt8(buf);
+        UNUSED(mysql_refresh);
+        LOG_INFO("Mysql Refresh");
     }
         mysql_set_conn_state(conn_data, RESPONSE_OK);
         break;
@@ -1276,6 +1293,8 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     case MYSQL_SHUTDOWN:
     {
         uint8_t mysql_shutdown = buf_readInt8(buf);
+        UNUSED(mysql_shutdown);
+        LOG_INFO("Mysql Shutdown");
     }
         mysql_set_conn_state(conn_data, RESPONSE_OK);
         break;
@@ -1283,6 +1302,7 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     case MYSQL_SET_OPTION:
     {
         uint16_t mysql_option = buf_readInt16LE(buf);
+        LOG_INFO("Mysql Set Option 0x%04x", mysql_option);
     }
         mysql_set_conn_state(conn_data, RESPONSE_OK);
         break;
@@ -1290,7 +1310,8 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
     case MYSQL_STMT_FETCH:
     {
         uint32_t stmt_id = buf_readInt32LE(buf);
-        uint32_t mysql_num_rows = buf_readInt32LE(buf);
+        uint32_t num_rows = buf_readInt32LE(buf);
+        LOG_INFO("Mysql Statement Fetch StmtId %u NumRows %u", stmt_id, num_rows);
     }
         mysql_set_conn_state(conn_data, RESPONSE_TABULAR);
         break;
@@ -1376,9 +1397,11 @@ mysql_dissect_request(struct buffer *buf, mysql_conn_data_t *conn_data)
 
     case MYSQL_BINLOG_DUMP:
     {
-        uint32_t mysql_binlog_position = buf_readInt32LE(buf);
-        uint16_t mysql_binlog_flags = buf_readInt16(buf); // BIG_ENDIAN !!!
-        uint32_t mysql_binlog_server_id = buf_readInt32LE(buf);
+        uint32_t binlog_position = buf_readInt32LE(buf);
+        uint16_t binlog_flags = buf_readInt16(buf); // BIG_ENDIAN !!!
+        uint32_t binlog_server_id = buf_readInt32LE(buf);
+        LOG_INFO("Mysql Binlog Dump binlogPosition %u binlogFlags 0x%04x binlogServerId %u",
+                binlog_position, binlog_flags, binlog_server_id);
     }
 
         /* binlog file name ? */
@@ -1503,7 +1526,7 @@ OK packet.
                 /* This is the OK packet which follows the compressed protocol setup */
                 conn_data->compressed_state = MYSQL_COMPRESS_ACTIVE;
                 // TODO
-                PANIC("MYSQL_COMPRESS NOT SUPPORT");
+                // PANIC("MYSQL_COMPRESS NOT SUPPORT");
             }
         }
         else
@@ -1576,14 +1599,12 @@ Row result set(Text or Binary) will now be terminated with OK packet.
             break;
 
         case AUTH_SWITCH_REQUEST:
-            // offset = mysql_dissect_auth_switch_request(tvb, offset, tree, conn_data);
+            mysql_dissect_auth_switch_request(buf, conn_data);
             break;
 
         default:
-            // ti = proto_tree_add_item(tree, hf_mysql_payload, tvb, offset, -1, ENC_NA);
-            // expert_add_info(ti, &ei_mysql_unknown_response);
-            // offset += tvb_reported_length_remaining(tvb, offset);
-            // mysql_set_conn_state(conn_data, UNDEFINED);
+            // 未知状态, 数据丢弃
+            mysql_set_conn_state(conn_data, UNDEFINED);
             break;
         }
     }
@@ -1689,7 +1710,6 @@ mysql_dissect_field_packet(struct buffer *buf, mysql_conn_data_t *conn_data)
     conn_data->cur_field++;
     LOG_INFO("Field %llu", conn_data->cur_field);
 
-    char *str;
     buf_readFleStr(buf, g_buf, BUFSZ);
     LOG_INFO("Catalog %s", g_buf);
 
@@ -2108,22 +2128,15 @@ mysql_dissect_response_prepare(struct buffer *buf, mysql_conn_data_t *conn_data)
     conn_data->stmt_num_fields = buf_readInt16LE(buf);
     conn_data->stmt_num_params = buf_readInt16LE(buf);
 
-    LOG_INFO("Mysql Statement Id %u, Fields %us, Params %us",
+    LOG_INFO("Mysql Statement Id %u, Fields %u, Params %u",
              stmt_id, conn_data->stmt_num_fields, conn_data->stmt_num_params);
 
     // FIX 5.7 EOF 问题
     // TODO TODO
     conn_data->num_fields = conn_data->stmt_num_params;
 
-    // TODO free
-    struct mysql_stmt_data *stmt_data = calloc(1, sizeof(*stmt_data));
+    struct mysql_stmt_data *stmt_data = mysql_stmt_data_create(conn_data->stmt_num_params);
     assert(stmt_data);
-    stmt_data->nparam = conn_data->stmt_num_params;
-
-    int flagsize = (int)(sizeof(uint8_t) * stmt_data->nparam);
-    // TODO free
-    stmt_data->param_flags = (uint8_t *)malloc(flagsize);
-    memset(stmt_data->param_flags, 0, flagsize);
 
     int absent;
     khint_t k = kh_put(stmts, conn_data->stmts, stmt_id, &absent);
