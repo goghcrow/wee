@@ -17,5 +17,4 @@ bool hs_decode_int(const uint8_t *buf, size_t sz, int32_t *out);
 
 int hs_encode_string(const char *str, uint8_t *out);
 bool hs_decode_string(const uint8_t *buf, size_t sz, char **out, size_t *out_sz);
-
 #endif
